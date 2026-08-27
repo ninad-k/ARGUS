@@ -14,7 +14,14 @@ from dataclasses import dataclass
 
 import structlog
 
-from argus.advisor import apply_verdicts, build_backend, review_picks
+from argus.advisor import (
+    apply_verdicts,
+    build_backend,
+    council_review,
+    council_to_pick_verdicts,
+    get_personas,
+    review_picks,
+)
 from argus.config import AppSettings, get_settings
 from argus.config.data import DataSettings
 from argus.data.fundamentals import build_default_fundamentals
@@ -213,6 +220,12 @@ async def _review_with_llm(result: ScreenResult, market: Market, settings: AppSe
     ``argus.advisor.llm``) -- this runs once per daily pipeline call inside a
     long-lived scheduler process, so the backend is always closed via
     ``aclose()`` once the review is done, success or failure.
+
+    When ``settings.llm.council_enabled``, this fans the review out to the
+    configured investor personas (``argus.advisor.council``) instead of the
+    single-pass reviewer -- one LLM call per persona instead of one call
+    total, deterministically fused into the same ``PickVerdict`` shape so
+    everything downstream (persistence, UI) is unaffected either way.
     """
     try:
         backend = build_backend(settings.llm)
@@ -221,7 +234,13 @@ async def _review_with_llm(result: ScreenResult, market: Market, settings: AppSe
         return False
 
     try:
-        verdicts = await review_picks(result.top, market, backend)
+        if settings.llm.council_enabled:
+            slugs = [s.strip() for s in settings.llm.council_personas.split(",") if s.strip()]
+            personas = get_personas(slugs)
+            council = await council_review(result.top, market, backend, personas)
+            verdicts = council_to_pick_verdicts(council)
+        else:
+            verdicts = await review_picks(result.top, market, backend)
     except Exception as exc:  # LLM/backend failure must never break the pipeline
         logger.warning("pipeline.llm_review.failed", error=str(exc))
         return False

@@ -216,6 +216,53 @@ async def test_run_daily_pipeline_llm_review_applied_when_backend_succeeds(
     assert momo.llm_verdict.verdict == "buy"
 
 
+async def test_run_daily_pipeline_council_review_applied_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``council_enabled=True`` fans the review out to the default council
+    (buffett, lynch, druckenmiller) instead of the single-pass reviewer --
+    same fake backend answers every persona's call identically here, so
+    fusion collapses to a unanimous "buy" with all three votes attached."""
+    settings = AppSettings(
+        data_dir=tmp_path,
+        llm=LLMSettings(enabled=True, council_enabled=True, _env_file=None),  # type: ignore[call-arg]
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    monkeypatch.setattr("argus.pipeline.get_settings", lambda: settings)
+
+    from argus.advisor.llm import LLMRequest, LLMResponse
+
+    class _FakeCouncilBackend:
+        provider = "fake"
+        model = "fake-1"
+
+        async def complete(self, req: LLMRequest) -> LLMResponse:
+            return LLMResponse(
+                text='{"picks": [{"symbol": "MOMO", "verdict": "buy", '
+                '"confidence": 80, "thesis": "t"}]}',
+                provider=self.provider,
+                model=self.model,
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("argus.pipeline.build_backend", lambda _settings: _FakeCouncilBackend())
+
+    provider, instruments = _provider_and_instruments()
+    universe_provider = StaticUniverseProvider({US_NASDAQ.code: instruments})
+
+    report = await run_daily_pipeline(
+        US_NASDAQ.code, provider=provider, universe_provider=universe_provider
+    )
+
+    assert report.llm_used is True
+    momo = next(c for c in report.result.candidates if c.instrument.symbol == "MOMO")
+    assert momo.llm_verdict is not None
+    assert momo.llm_verdict.verdict == "buy"
+    assert len(momo.llm_verdict.votes) == 3  # default council: buffett, lynch, druckenmiller
+
+
 async def test_run_daily_pipeline_llm_backend_failure_degrades_gracefully(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

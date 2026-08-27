@@ -45,6 +45,18 @@ def _pick_expansion(p: DailyPick) -> None:
             ui.label("Risks").classes("font-bold mt-2")
             ui.label(str(verdict.get("risks") or _NA))
 
+            votes = verdict.get("votes") or []
+            if votes:
+                ui.label("Council Votes").classes("font-bold mt-2")
+                for vote in votes:
+                    if not isinstance(vote, dict):
+                        continue
+                    persona = vote.get("persona", _NA)
+                    vote_verdict = vote.get("verdict", _NA)
+                    confidence = vote.get("confidence", _NA)
+                    thesis = str(vote.get("thesis") or _NA)
+                    ui.label(f"{persona}: {vote_verdict} (confidence {confidence}) — {thesis}")
+
         if p.features_json:
             ui.label("Features").classes("font-bold mt-2")
             ui.markdown(

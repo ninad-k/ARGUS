@@ -4,6 +4,7 @@ plus a ``persist_screen_result`` round-trip of ``llm_verdict_json``.
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -176,5 +177,8 @@ async def test_persist_screen_result_round_trips_llm_verdict_json(tmp_path: Path
         )
     by_symbol = {p.symbol: p for p in picks}
 
-    assert by_symbol["AAA"].llm_verdict_json == asdict(verdict)
+    # `votes` is a tuple in-memory (see `PickVerdict.votes`) but round-trips
+    # through the JSON column as a list -- normalize via a JSON round-trip
+    # rather than comparing `asdict(verdict)` directly.
+    assert by_symbol["AAA"].llm_verdict_json == json.loads(json.dumps(asdict(verdict)))
     assert by_symbol["BBB"].llm_verdict_json is None

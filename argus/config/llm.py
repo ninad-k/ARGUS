@@ -15,3 +15,9 @@ class LLMSettings(BaseSettings):
     base_url: str = "http://localhost:11434"
     api_key: SecretStr | None = None
     timeout_seconds: int = 120
+
+    # Multi-persona council review (argus.advisor.council) in place of the
+    # single-pass reviewer. Off by default -- N personas means N LLM calls
+    # per run instead of one.
+    council_enabled: bool = False
+    council_personas: str = "buffett,lynch,druckenmiller"

@@ -55,6 +55,9 @@ async def settings_page() -> None:
             ui.label(f"Model: {settings.llm.model}")
             ui.label(f"Base URL: {settings.llm.base_url}")
             ui.label(f"Enabled: {settings.llm.enabled}")
+            ui.label(f"Council enabled: {settings.llm.council_enabled}")
+            if settings.llm.council_enabled:
+                ui.label(f"Council personas: {settings.llm.council_personas}")
             result_label = ui.label("").classes("text-sm")
             ui.button(
                 "Check Ollama connectivity",

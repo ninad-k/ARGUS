@@ -9,12 +9,12 @@ breaking the screener pipeline.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import structlog
 
+from argus.advisor.digest import build_digest
 from argus.advisor.llm import LLMBackend, LLMRequest, parse_llm_json
 from argus.markets import Market
 from argus.screener.base import Candidate
@@ -24,18 +24,6 @@ logger = structlog.get_logger(__name__)
 
 Verdict = Literal["buy", "watch", "avoid"]
 _VALID_VERDICTS = frozenset({"buy", "watch", "avoid"})
-
-# Compact feature subset shown to the LLM per candidate — enough to reason
-# about momentum/extension without dumping the full feature vector.
-_PROMPT_FEATURE_KEYS: tuple[str, ...] = (
-    "close",
-    "rsi_14",
-    "roc_20",
-    "roc_60",
-    "rvol",
-    "pct_off_high",
-    "dist_sma200_pct",
-)
 
 _SYSTEM_PROMPT = (
     "You are a senior equity analyst reviewing candidates produced by a "
@@ -55,50 +43,21 @@ class PickVerdict:
     confidence: int
     thesis: str
     risks: str
+    # Per-persona council votes, when this verdict came from
+    # ``council.council_to_pick_verdicts`` rather than a single-pass review.
+    # Empty for the default (non-council) path -- existing persistence/UI
+    # code that never looks at ``votes`` is unaffected.
+    votes: tuple[dict[str, object], ...] = ()
 
 
-def _format_candidate(c: Candidate) -> str:
-    lines = [
-        f"Symbol: {c.instrument.symbol}",
-        f"Strategy: {c.strategy}",
-        f"Score: {c.score:.2f}",
-        f"Direction: {c.direction}",
-        f"Stage: {c.stage}",
-        f"Reason: {c.reason}",
-    ]
-    if c.entry is not None:
-        lines.append(f"Entry: {c.entry:.2f}")
-    if c.stop is not None:
-        lines.append(f"Stop: {c.stop:.2f}")
-    if c.target is not None:
-        lines.append(f"Target: {c.target:.2f}")
-
-    feature_bits = []
-    for key in _PROMPT_FEATURE_KEYS:
-        value = c.features.get(key)
-        if value is None or math.isnan(value):
-            continue
-        feature_bits.append(f"{key}={value:.2f}")
-    if feature_bits:
-        lines.append("Features: " + ", ".join(feature_bits))
-
-    return "\n".join(lines)
-
-
-def _build_user_prompt(candidates: list[Candidate], market: Market) -> str:
-    header = f"Market: {market.name} ({market.code})\nCandidates ({len(candidates)}):\n\n"
-    blocks = "\n\n".join(_format_candidate(c) for c in candidates)
-    return header + blocks
-
-
-def _coerce_verdict(raw: Any) -> Verdict:
+def coerce_verdict(raw: Any) -> Verdict:
     if raw in _VALID_VERDICTS:
         verdict: Verdict = raw
         return verdict
     return "watch"
 
 
-def _coerce_confidence(raw: Any) -> int:
+def coerce_confidence(raw: Any) -> int:
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -106,8 +65,12 @@ def _coerce_confidence(raw: Any) -> int:
     return max(0, min(100, value))
 
 
-def _parse_rows(text: str) -> list[Any]:
-    """Extract the ``picks`` array from the LLM's JSON object response."""
+def parse_picks_rows(text: str) -> list[Any]:
+    """Extract the ``picks`` array from an LLM's JSON object response.
+
+    Shared by ``review_picks`` and ``council._review_as_persona`` -- both
+    prompt for the same ``{"picks": [...]}`` shape.
+    """
     parsed = parse_llm_json(text)
     if parsed is None:
         return []
@@ -129,7 +92,7 @@ async def review_picks(
     if not candidates:
         return {}
 
-    request = LLMRequest(system=_SYSTEM_PROMPT, user=_build_user_prompt(candidates, market))
+    request = LLMRequest(system=_SYSTEM_PROMPT, user=build_digest(candidates, market))
     try:
         response = await backend.complete(request)
     except Exception as exc:  # LLM failure must never break the screener pipeline
@@ -140,7 +103,7 @@ async def review_picks(
         logger.warning("advisor.pick_reviewer.empty_response", provider=response.provider)
         return {}
 
-    rows = _parse_rows(response.text)
+    rows = parse_picks_rows(response.text)
     if not rows:
         logger.warning("advisor.pick_reviewer.unparseable_response", provider=response.provider)
         return {}
@@ -155,8 +118,8 @@ async def review_picks(
             continue
         verdicts[symbol] = PickVerdict(
             symbol=symbol,
-            verdict=_coerce_verdict(row.get("verdict")),
-            confidence=_coerce_confidence(row.get("confidence")),
+            verdict=coerce_verdict(row.get("verdict")),
+            confidence=coerce_confidence(row.get("confidence")),
             thesis=str(row.get("thesis") or ""),
             risks=str(row.get("risks") or ""),
         )
