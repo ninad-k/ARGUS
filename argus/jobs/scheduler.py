@@ -50,7 +50,7 @@ async def run_market_job(market_code: str) -> ScreenReport | None:
         return None
 
     try:
-        path = save_report(report)
+        path = save_report(report, fmt="both")
         logger.info("jobs.scheduler.report_saved", market=market_code, path=str(path))
     except Exception as exc:  # report I/O failure shouldn't discard a good run
         logger.error("jobs.scheduler.save_report_failed", market=market_code, error=str(exc))

@@ -130,8 +130,11 @@ async def test_run_market_job_saves_report_on_success(
 
     saved: dict[str, Any] = {}
 
-    def _fake_save_report(report: ScreenReport, out_dir: Path | None = None) -> Path:
+    def _fake_save_report(
+        report: ScreenReport, out_dir: Path | None = None, *, fmt: str = "md"
+    ) -> Path:
         saved["report"] = report
+        saved["fmt"] = fmt
         return tmp_path / "fake_report.md"
 
     monkeypatch.setattr("argus.jobs.scheduler.save_report", _fake_save_report)
@@ -140,6 +143,7 @@ async def test_run_market_job_saves_report_on_success(
 
     assert report is fake_report
     assert saved["report"] is fake_report
+    assert saved["fmt"] == "both"
 
 
 def test_market_registry_unaffected_by_dataclasses_replace() -> None:

@@ -8,6 +8,7 @@ _PAGES: tuple[tuple[str, str], ...] = (
     ("Dashboard", "/"),
     ("Picks", "/picks"),
     ("Paper", "/paper"),
+    ("History", "/history"),
     ("Sources", "/sources"),
     ("Settings", "/settings"),
 )

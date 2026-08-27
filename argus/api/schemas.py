@@ -6,7 +6,7 @@ router modules, not here.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -169,3 +169,43 @@ class PaperEquityResponse(BaseModel):
 class PaperResetResponse(BaseModel):
     ok: bool
     detail: str
+
+
+class PickOutcomeOut(BaseModel):
+    pick_id: int
+    symbol: str
+    market: str
+    strategy: str
+    picked_at: date
+    entry: float
+    stop: float | None
+    target: float | None
+    days_held: int
+    status: str
+    return_pct: float | None
+    max_favorable_pct: float
+    max_adverse_pct: float
+
+
+class OutcomesResponse(BaseModel):
+    outcomes: list[PickOutcomeOut]
+    summary: dict[str, Any]
+
+
+class AttributionRowOut(BaseModel):
+    symbol: str
+    market: str
+    strategy: str
+    picked_at: date
+    fill_price: float
+    qty: float
+    exit_price: float | None
+    pnl: float | None
+    pnl_pct: float | None
+    llm_verdict: str | None
+    status: str
+
+
+class AttributionResponse(BaseModel):
+    rows: list[AttributionRowOut]
+    summary: dict[str, Any]

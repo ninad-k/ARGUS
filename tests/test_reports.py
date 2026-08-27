@@ -9,7 +9,12 @@ from argus.advisor.pick_reviewer import PickVerdict
 from argus.markets import US_NASDAQ, Instrument
 from argus.options.suggester import DerivativeSuggestion, RiskLevel
 from argus.pipeline import ScreenReport
-from argus.reports import render_markdown_report, save_report
+from argus.reports import (
+    latest_report_path,
+    render_html_report,
+    render_markdown_report,
+    save_report,
+)
 from argus.screener.base import Candidate
 from argus.screener.runner import ScreenResult
 
@@ -157,3 +162,97 @@ def test_save_report_creates_out_dir_if_missing(tmp_path: Path) -> None:
 
     assert path.parent == target_dir
     assert path.exists()
+
+
+def test_render_html_report_contains_key_strings_and_no_external_urls() -> None:
+    verdict = PickVerdict(
+        symbol="AAPL", verdict="buy", confidence=85, thesis="strong momentum", risks="extended"
+    )
+    candidate = _candidate("AAPL", verdict=verdict)
+    suggestion = _suggestion("AAPL")
+    report = _report(top=[candidate], suggestions={"AAPL": suggestion})
+
+    document = render_html_report(report)
+
+    assert "<!doctype html>" in document.lower()
+    assert "AAPL" in document
+    assert "87.50" in document
+    assert "buy" in document
+    assert "strong momentum" in document
+    assert US_NASDAQ.code in document
+    assert "Derivative Ideas" in document
+    # Self-contained: no external stylesheet/script/font/image references.
+    assert "http://" not in document
+    assert "https://" not in document
+    assert "<link" not in document
+    assert "<script" not in document
+
+
+def test_render_html_report_handles_no_candidates() -> None:
+    report = _report(top=[])
+
+    document = render_html_report(report)
+
+    assert "No candidates cleared the screen today" in document
+
+
+def test_render_html_report_escapes_untrusted_text() -> None:
+    candidate = _candidate("AAPL")
+    candidate.reason = "<script>alert(1)</script>"
+    report = _report(top=[candidate])
+
+    document = render_html_report(report)
+
+    assert "<script>alert(1)</script>" not in document
+    assert "&lt;script&gt;" in document
+
+
+def test_save_report_fmt_both_writes_markdown_and_html(tmp_path: Path) -> None:
+    report = _report(top=[_candidate("AAPL")])
+
+    path = save_report(report, out_dir=tmp_path, fmt="both")
+
+    md_path = tmp_path / f"{US_NASDAQ.code}_2026-08-27.md"
+    html_path = tmp_path / f"{US_NASDAQ.code}_2026-08-27.html"
+    assert path == md_path
+    assert md_path.exists()
+    assert html_path.exists()
+    assert "AAPL" in md_path.read_text(encoding="utf-8")
+    assert "AAPL" in html_path.read_text(encoding="utf-8")
+
+
+def test_save_report_fmt_html_only_writes_html(tmp_path: Path) -> None:
+    report = _report(top=[_candidate("AAPL")])
+
+    path = save_report(report, out_dir=tmp_path, fmt="html")
+
+    assert path == tmp_path / f"{US_NASDAQ.code}_2026-08-27.html"
+    assert path.exists()
+    assert not (tmp_path / f"{US_NASDAQ.code}_2026-08-27.md").exists()
+
+
+def test_latest_report_path_returns_newest_by_filename_date(tmp_path: Path) -> None:
+    older = _report(top=[_candidate("AAPL")])
+    save_report(older, out_dir=tmp_path)
+
+    newer_result = ScreenResult(
+        market_code=US_NASDAQ.code,
+        run_ts=datetime(2026, 8, 28, 16, 30, 0, tzinfo=UTC),
+        universe_size=42,
+        filtered_size=10,
+        candidates=[_candidate("MSFT")],
+        top=[_candidate("MSFT")],
+    )
+    newer = ScreenReport(
+        result=newer_result, run_id=8, bars_refreshed=1, symbols_failed=[], llm_used=False
+    )
+    save_report(newer, out_dir=tmp_path)
+
+    path = latest_report_path(US_NASDAQ.code, out_dir=tmp_path)
+
+    assert path == tmp_path / f"{US_NASDAQ.code}_2026-08-28.md"
+
+
+def test_latest_report_path_returns_none_when_missing(tmp_path: Path) -> None:
+    assert latest_report_path("US_NASDAQ", out_dir=tmp_path / "nope") is None
+    assert latest_report_path(None, out_dir=tmp_path) is None

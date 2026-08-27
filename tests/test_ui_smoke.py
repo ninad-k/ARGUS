@@ -25,12 +25,15 @@ def test_create_app_registers_api_routes() -> None:
     assert "/api/v1/paper/orders" in paths
     assert "/api/v1/paper/equity" in paths
     assert "/api/v1/paper/reset" in paths
+    assert "/api/v1/history/outcomes" in paths
+    assert "/api/v1/history/attribution" in paths
+    assert "/api/v1/reports/latest" in paths
 
 
 def test_create_app_registers_nicegui_pages() -> None:
     create_app()
     page_paths = set(Client.page_routes.values())
-    assert {"/", "/picks", "/paper", "/sources", "/settings"} <= page_paths
+    assert {"/", "/picks", "/paper", "/history", "/sources", "/settings"} <= page_paths
 
 
 def test_create_app_is_cached_across_calls() -> None:
