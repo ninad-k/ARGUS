@@ -36,6 +36,7 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "mypy",
+    "pandas-stubs",
 ]
 
 [project.scripts]
@@ -81,8 +82,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m \"not network\""
 markers = [
     "unit: fast isolated tests",
     "integration: tests requiring DB/external services",
+    "network: tests that hit live external network services (skipped by default)",
 ]

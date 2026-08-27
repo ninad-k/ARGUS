@@ -1,0 +1,51 @@
+symbol,name,sector
+JPM,JPMorgan Chase & Co.,Financials
+V,Visa Inc.,Technology
+JNJ,Johnson & Johnson,Healthcare
+WMT,Walmart Inc.,Consumer Staples
+PG,Procter & Gamble Co.,Consumer Staples
+XOM,Exxon Mobil Corp.,Energy
+MA,Mastercard Inc.,Technology
+HD,Home Depot Inc.,Consumer Discretionary
+CVX,Chevron Corp.,Energy
+MRK,Merck & Co. Inc.,Healthcare
+KO,Coca-Cola Co.,Consumer Staples
+BAC,Bank of America Corp.,Financials
+PFE,Pfizer Inc.,Healthcare
+DIS,Walt Disney Co.,Communication Services
+VZ,Verizon Communications Inc.,Communication Services
+NKE,Nike Inc.,Consumer Discretionary
+CRM,Salesforce Inc.,Technology
+ABT,Abbott Laboratories,Healthcare
+TMO,Thermo Fisher Scientific Inc.,Healthcare
+MCD,McDonald's Corp.,Consumer Discretionary
+ACN,Accenture plc,Technology
+LLY,Eli Lilly and Co.,Healthcare
+DHR,Danaher Corp.,Healthcare
+WFC,Wells Fargo & Co.,Financials
+UNP,Union Pacific Corp.,Industrials
+LOW,Lowe's Companies Inc.,Consumer Discretionary
+IBM,International Business Machines Corp.,Technology
+CAT,Caterpillar Inc.,Industrials
+GS,Goldman Sachs Group Inc.,Financials
+MS,Morgan Stanley,Financials
+AXP,American Express Co.,Financials
+SPGI,S&P Global Inc.,Financials
+BLK,BlackRock Inc.,Financials
+BA,Boeing Co.,Industrials
+ELV,Elevance Health Inc.,Healthcare
+GE,General Electric Co.,Industrials
+MMM,3M Co.,Industrials
+PLD,Prologis Inc.,Real Estate
+SCHW,Charles Schwab Corp.,Financials
+DE,Deere & Co.,Industrials
+CI,Cigna Group,Healthcare
+SYK,Stryker Corp.,Healthcare
+TJX,TJX Companies Inc.,Consumer Discretionary
+ADP,Automatic Data Processing Inc.,Industrials
+MDT,Medtronic plc,Healthcare
+C,Citigroup Inc.,Financials
+USB,U.S. Bancorp,Financials
+PGR,Progressive Corp.,Financials
+NOW,ServiceNow Inc.,Technology
+UPS,United Parcel Service Inc.,Industrials

@@ -1,0 +1,52 @@
+symbol,name,sector
+AAPL,Apple Inc.,Technology
+MSFT,Microsoft Corp.,Technology
+AMZN,Amazon.com Inc.,Consumer Discretionary
+GOOGL,Alphabet Inc. Class A,Communication Services
+GOOG,Alphabet Inc. Class C,Communication Services
+META,Meta Platforms Inc.,Communication Services
+NVDA,NVIDIA Corp.,Technology
+TSLA,Tesla Inc.,Consumer Discretionary
+AVGO,Broadcom Inc.,Technology
+PEP,PepsiCo Inc.,Consumer Staples
+COST,Costco Wholesale Corp.,Consumer Staples
+ADBE,Adobe Inc.,Technology
+CSCO,Cisco Systems Inc.,Technology
+CMCSA,Comcast Corp.,Communication Services
+INTC,Intel Corp.,Technology
+TXN,Texas Instruments Inc.,Technology
+QCOM,Qualcomm Inc.,Technology
+AMD,Advanced Micro Devices Inc.,Technology
+INTU,Intuit Inc.,Technology
+AMGN,Amgen Inc.,Healthcare
+HON,Honeywell International Inc.,Industrials
+SBUX,Starbucks Corp.,Consumer Discretionary
+AMAT,Applied Materials Inc.,Technology
+BKNG,Booking Holdings Inc.,Consumer Discretionary
+MDLZ,Mondelez International Inc.,Consumer Staples
+ADI,Analog Devices Inc.,Technology
+GILD,Gilead Sciences Inc.,Healthcare
+ISRG,Intuitive Surgical Inc.,Healthcare
+VRTX,Vertex Pharmaceuticals Inc.,Healthcare
+REGN,Regeneron Pharmaceuticals Inc.,Healthcare
+LRCX,Lam Research Corp.,Technology
+PANW,Palo Alto Networks Inc.,Technology
+MU,Micron Technology Inc.,Technology
+PYPL,PayPal Holdings Inc.,Technology
+SNPS,Synopsys Inc.,Technology
+CDNS,Cadence Design Systems Inc.,Technology
+ASML,ASML Holding N.V.,Technology
+MELI,MercadoLibre Inc.,Consumer Discretionary
+KLAC,KLA Corp.,Technology
+MAR,Marriott International Inc.,Consumer Discretionary
+ORLY,O'Reilly Automotive Inc.,Consumer Discretionary
+CTAS,Cintas Corp.,Industrials
+CSX,CSX Corp.,Industrials
+ABNB,Airbnb Inc.,Consumer Discretionary
+FTNT,Fortinet Inc.,Technology
+MNST,Monster Beverage Corp.,Consumer Staples
+PCAR,PACCAR Inc.,Industrials
+PAYX,Paychex Inc.,Industrials
+ROST,Ross Stores Inc.,Consumer Discretionary
+ODFL,Old Dominion Freight Line Inc.,Industrials
+KDP,Keurig Dr Pepper Inc.,Consumer Staples
