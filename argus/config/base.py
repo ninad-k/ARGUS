@@ -12,6 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from argus.config.data import DataSettings
 from argus.config.llm import LLMSettings
+from argus.config.options import OptionsSettings
 from argus.config.paper import PaperSettings
 from argus.config.scheduler import SchedulerSettings
 from argus.config.ui import UISettings
@@ -33,6 +34,7 @@ class AppSettings(BaseSettings):
 
     data: DataSettings = Field(default_factory=DataSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    options: OptionsSettings = Field(default_factory=OptionsSettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     ui: UISettings = Field(default_factory=UISettings)

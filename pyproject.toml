@@ -67,6 +67,9 @@ ignore = ["S101"]        # allow `assert` in tests
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "N802", "N803"]
+# Black-Scholes notation (S, K, T, sqrt_T, ...) is standard finance shorthand,
+# ported from DRUVA -- not a naming-convention violation worth diverging on.
+"argus/options/**" = ["N803", "N806"]
 
 # --- MyPy ------------------------------------------------------------------
 [tool.mypy]

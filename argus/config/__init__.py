@@ -3,6 +3,7 @@
 from argus.config.base import AppSettings, get_settings
 from argus.config.data import DataSettings
 from argus.config.llm import LLMSettings
+from argus.config.options import OptionsSettings
 from argus.config.paper import PaperSettings
 from argus.config.scheduler import SchedulerSettings
 from argus.config.ui import UISettings
@@ -12,6 +13,7 @@ __all__ = [
     "AppSettings",
     "DataSettings",
     "LLMSettings",
+    "OptionsSettings",
     "PaperSettings",
     "SchedulerSettings",
     "UISettings",

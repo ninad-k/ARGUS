@@ -29,6 +29,67 @@ async def test_seed_universe_missing_file_returns_empty(tmp_path: Path) -> None:
     assert result == []
 
 
+async def test_seed_universe_us_markets_all_flagged_has_options() -> None:
+    provider = SeedUniverseProvider()
+    for market in (US_NASDAQ, US_NYSE):
+        instruments = await provider.universe(market)
+        assert instruments
+        assert all(inst.has_options for inst in instruments)
+        assert all(not inst.has_futures for inst in instruments)
+        assert all(inst.lot_size == 1 for inst in instruments)
+
+
+async def test_seed_universe_in_nse_fno_symbols_flagged_with_lot_size() -> None:
+    provider = SeedUniverseProvider()
+    instruments = await provider.universe(IN_NSE)
+    by_symbol = {inst.symbol: inst for inst in instruments}
+
+    reliance = by_symbol["RELIANCE"]
+    assert reliance.has_options is True
+    assert reliance.has_futures is True
+    assert reliance.lot_size == 250
+
+    # At least one F&O name and one non-F&O name are present, so the split
+    # actually exercises both branches (not every IN_NSE seed symbol is F&O).
+    fno = [inst for inst in instruments if inst.has_options]
+    non_fno = [inst for inst in instruments if not inst.has_options]
+    assert len(fno) >= 30
+    assert non_fno
+    assert all(inst.has_futures is False and inst.lot_size == 1 for inst in non_fno)
+
+
+async def test_seed_universe_in_nse_fno_symbol_without_lot_size_entry_defaults_to_one(
+    tmp_path: Path,
+) -> None:
+    """A symbol present in the F&O list but absent from ``_FNO_LOT_SIZES``
+    still gets has_options/has_futures -- just with the lot_size=1 default."""
+    (tmp_path / "IN_NSE.csv").write_text(
+        "symbol,name,sector\nZZZFNO,ZZZ Corp,Industrials\n", encoding="utf-8"
+    )
+    (tmp_path / "IN_NSE_fno.txt").write_text("ZZZFNO\n", encoding="utf-8")
+
+    provider = SeedUniverseProvider(seeds_dir=tmp_path)
+    instruments = await provider.universe(IN_NSE)
+
+    assert len(instruments) == 1
+    assert instruments[0].has_options is True
+    assert instruments[0].has_futures is True
+    assert instruments[0].lot_size == 1
+
+
+async def test_seed_universe_in_nse_missing_fno_file_sets_no_flags(tmp_path: Path) -> None:
+    (tmp_path / "IN_NSE.csv").write_text(
+        "symbol,name,sector\nRELIANCE,Reliance Industries Ltd.,Energy\n", encoding="utf-8"
+    )
+    provider = SeedUniverseProvider(seeds_dir=tmp_path)
+    instruments = await provider.universe(IN_NSE)
+
+    assert len(instruments) == 1
+    assert instruments[0].has_options is False
+    assert instruments[0].has_futures is False
+    assert instruments[0].lot_size == 1
+
+
 async def test_static_universe_provider_returns_added_instruments() -> None:
     provider = StaticUniverseProvider()
     inst = Instrument(symbol="AAPL", market_code=US_NASDAQ.code, name="Apple Inc.")

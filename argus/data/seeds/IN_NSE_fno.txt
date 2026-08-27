@@ -1,0 +1,48 @@
+# NSE F&O-eligible symbols (subset of IN_NSE.csv known to have listed
+# options + futures). Not exhaustive -- picked from IN_NSE.csv's own
+# constituents for symbols that are reliably in NSE's F&O segment. See
+# argus/data/universe.py for how this drives Instrument.has_options/has_futures.
+RELIANCE
+TCS
+HDFCBANK
+ICICIBANK
+INFY
+HINDUNILVR
+ITC
+SBIN
+BHARTIARTL
+KOTAKBANK
+LT
+AXISBANK
+BAJFINANCE
+ASIANPAINT
+MARUTI
+HCLTECH
+SUNPHARMA
+TITAN
+ULTRACEMCO
+WIPRO
+NESTLEIND
+ADANIENT
+ADANIPORTS
+ONGC
+NTPC
+POWERGRID
+TATAMOTORS
+TATASTEEL
+JSWSTEEL
+COALINDIA
+BAJAJFINSV
+HDFCLIFE
+SBILIFE
+INDUSINDBK
+GRASIM
+DRREDDY
+CIPLA
+DIVISLAB
+EICHERMOT
+BRITANNIA
+HEROMOTOCO
+BPCL
+TECHM
+UPL
