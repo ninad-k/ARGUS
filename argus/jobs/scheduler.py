@@ -21,7 +21,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from argus.config import AppSettings, get_settings
+from argus.data.store.duckdb_ohlcv import BarStore
 from argus.markets import IN_NSE, US_NASDAQ, US_NYSE, get_market
+from argus.paper.engine import run_paper_cycle
 from argus.pipeline import ScreenReport, run_daily_pipeline
 from argus.reports import save_report
 
@@ -52,6 +54,21 @@ async def run_market_job(market_code: str) -> ScreenReport | None:
         logger.info("jobs.scheduler.report_saved", market=market_code, path=str(path))
     except Exception as exc:  # report I/O failure shouldn't discard a good run
         logger.error("jobs.scheduler.save_report_failed", market=market_code, error=str(exc))
+
+    # Paper-trading cycle: fill yesterday's orders against today's bars,
+    # apply exit rules, queue new orders from today's picks, snapshot
+    # equity. ``run_paper_cycle`` exception-contains each of its own steps,
+    # so this outer guard is belt-and-braces against anything it missed
+    # (e.g. failing to open the store) -- a paper-cycle failure must never
+    # take down the scheduler or discard an otherwise-good screen run.
+    settings = get_settings()
+    store = BarStore(settings.duckdb_path)
+    try:
+        await run_paper_cycle(market_code, report, store)
+    except Exception as exc:
+        logger.error("jobs.scheduler.paper_cycle_failed", market=market_code, error=str(exc))
+    finally:
+        store.close()
 
     return report
 

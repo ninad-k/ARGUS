@@ -28,6 +28,7 @@ from argus.data.prices.static_provider import StaticPriceProvider, synthetic_bar
 from argus.data.store.duckdb_ohlcv import BarStore
 from argus.data.universe import SeedUniverseProvider, StaticUniverseProvider, UniverseProvider
 from argus.markets import Instrument, Market, get_market
+from argus.paper.engine import run_paper_cycle
 from argus.pipeline import run_daily_pipeline
 from argus.reports import render_markdown_report, save_report
 
@@ -133,6 +134,8 @@ async def _run(args: argparse.Namespace) -> int:
             store=store,
             universe_provider=universe_provider,
         )
+        if args.paper:
+            await run_paper_cycle(args.market, report, store)
     finally:
         store.close()
 
@@ -155,6 +158,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--no-llm", action="store_true", help="Skip the LLM review even if a backend is reachable."
+    )
+    parser.add_argument(
+        "--paper",
+        action="store_true",
+        help="Also exercise the paper-trading cycle (fill/exit/queue/snapshot) offline.",
     )
     parser.add_argument("--out", type=Path, default=None, help="Directory to save the report in.")
     return parser.parse_args(argv)

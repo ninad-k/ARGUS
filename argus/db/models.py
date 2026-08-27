@@ -138,6 +138,17 @@ class PaperEquityPoint(Base):
     total_pnl: Mapped[float]
 
 
+class PaperCash(Base):
+    """Simulated cash ledger, one row per currency-domain (see
+    ``argus.paper.portfolio.cash_domain``)."""
+
+    __tablename__ = "paper_cash"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    domain: Mapped[str] = mapped_column(unique=True)
+    cash: Mapped[float]
+
+
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
 
