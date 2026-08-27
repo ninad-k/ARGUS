@@ -23,8 +23,12 @@ from argus.utils.retry import retry_async
 logger = structlog.get_logger(__name__)
 
 
-def _yahoo_ticker(inst: Instrument) -> str:
-    """Map an ``Instrument`` to its Yahoo Finance ticker symbol."""
+def yahoo_ticker(inst: Instrument) -> str:
+    """Map an ``Instrument`` to its Yahoo Finance ticker symbol.
+
+    Public (not module-private) because ``argus.data.fundamentals.yfinance_fundamentals``
+    reuses the same NSE ``.NS`` suffix convention for ``Ticker.info`` lookups.
+    """
     if inst.market_code == IN_NSE.code:
         return f"{inst.symbol}.NS"
     return inst.symbol
@@ -83,7 +87,7 @@ class YFinanceProvider:
             return np.zeros(0, dtype=BAR_DTYPE)
 
     def _fetch_daily_bars(self, inst: Instrument, start: date, end: date) -> NDArray[np.void]:
-        ticker = yf.Ticker(_yahoo_ticker(inst))
+        ticker = yf.Ticker(yahoo_ticker(inst))
         # yfinance's `end` is exclusive — add a day so callers can pass an
         # inclusive end date.
         hist = ticker.history(
@@ -132,7 +136,7 @@ class YFinanceProvider:
             return None
 
     def _fetch_quote(self, inst: Instrument) -> Quote | None:
-        ticker = yf.Ticker(_yahoo_ticker(inst))
+        ticker = yf.Ticker(yahoo_ticker(inst))
         try:
             fast_info = ticker.fast_info
             price = float(fast_info.last_price)

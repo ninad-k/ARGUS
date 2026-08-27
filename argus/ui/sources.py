@@ -23,8 +23,18 @@ from argus.data.sources import (
 from argus.db.models import DataSource
 from argus.ui.layout import page_frame
 
-_KIND_OPTIONS: list[str] = ["yfinance", "static"]
+_KIND_OPTIONS: list[str] = ["yfinance", "tvscreener", "nse", "static"]
 _MARKET_OPTIONS: list[str] = ["US_NYSE", "US_NASDAQ", "IN_NSE"]
+
+# Shown next to each source row so an admin can tell at a glance what a kind
+# is actually good for -- e.g. "nse" only ever serves IN_NSE quotes, and
+# "tvscreener" has no OHLCV history at all (see the provider docstrings).
+_KIND_CAPABILITIES: dict[str, str] = {
+    "yfinance": "prices, quotes, fundamentals (all markets)",
+    "tvscreener": "quotes, universe ranking, fundamentals (no OHLCV history)",
+    "nse": "quotes only (IN_NSE only, no OHLCV history)",
+    "static": "prices, quotes (test/fixture data)",
+}
 
 
 async def _refresh(container: ui.column) -> None:
@@ -69,6 +79,7 @@ def _source_row(source: DataSource, container: ui.column) -> None:
         ui.label(source.kind).classes("w-24")
         ui.label(", ".join(source.markets_json.get("markets", []))).classes("w-48")
         ui.label(str(source.priority)).classes("w-16")
+        ui.label(_KIND_CAPABILITIES.get(source.kind, "")).classes("w-64 text-xs text-gray-400")
 
         async def _on_toggle(e: ValueChangeEventArguments[Any], sid: int = source_id) -> None:
             await _toggle_enabled(sid, bool(e.value), container)

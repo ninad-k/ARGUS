@@ -17,10 +17,15 @@ import structlog
 from argus.advisor import apply_verdicts, build_backend, review_picks
 from argus.config import AppSettings, get_settings
 from argus.config.data import DataSettings
+from argus.data.fundamentals import build_default_fundamentals
 from argus.data.prices.base import PriceDataProvider
-from argus.data.sources import build_composite_from_db, ensure_default_sources
+from argus.data.sources import (
+    build_composite_from_db,
+    ensure_default_sources,
+    resolve_universe_provider,
+)
 from argus.data.store.duckdb_ohlcv import BarStore, refresh_bars
-from argus.data.universe import SeedUniverseProvider, UniverseProvider, sync_instruments_to_db
+from argus.data.universe import UniverseProvider, sync_instruments_to_db
 from argus.db import init_db
 from argus.markets import Instrument, Market, get_market
 from argus.screener.runner import ScreenResult, persist_screen_result, run_screen
@@ -103,7 +108,9 @@ async def run_daily_pipeline(
         provider if provider is not None else await build_composite_from_db(settings)
     )
     resolved_universe: UniverseProvider = (
-        universe_provider if universe_provider is not None else SeedUniverseProvider()
+        universe_provider
+        if universe_provider is not None
+        else await resolve_universe_provider(settings)
     )
 
     try:
@@ -126,6 +133,7 @@ async def run_daily_pipeline(
             store=resolved_store,
             universe_provider=resolved_universe,
             top_n=top_n,
+            fundamentals_provider=build_default_fundamentals(),
         )
 
         llm_used = False

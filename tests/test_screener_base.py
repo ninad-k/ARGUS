@@ -3,6 +3,7 @@
 from datetime import date
 from pathlib import Path
 
+from argus.data.fundamentals.base import FundamentalsView, StaticFundamentalsProvider
 from argus.data.prices.static_provider import synthetic_bars
 from argus.data.store.duckdb_ohlcv import BarStore
 from argus.markets import IN_NSE, US_NASDAQ, Instrument
@@ -114,3 +115,83 @@ async def test_default_screen_context_features_prepopulated_cache_is_used(
         )
         result = await ctx.features(inst)
     assert result is sentinel
+
+
+async def test_default_screen_context_fundamentals_defaults_to_none(tmp_path: Path) -> None:
+    """No ``fundamentals_provider`` injected -- falls back to ``NullFundamentalsProvider``."""
+    inst = Instrument(symbol="AAPL", market_code=US_NASDAQ.code)
+    with BarStore(tmp_path / "bars.duckdb") as store:
+        ctx = DefaultScreenContext(US_NASDAQ, [inst], store)
+        result = await ctx.fundamentals(inst)
+    assert result is None
+
+
+async def test_default_screen_context_fundamentals_reads_through_to_provider(
+    tmp_path: Path,
+) -> None:
+    inst = Instrument(symbol="AAPL", market_code=US_NASDAQ.code)
+    view = FundamentalsView(symbol="AAPL", market_code=US_NASDAQ.code, as_of=date(2026, 1, 2))
+    provider = StaticFundamentalsProvider({"AAPL": view})
+    with BarStore(tmp_path / "bars.duckdb") as store:
+        ctx = DefaultScreenContext(US_NASDAQ, [inst], store, fundamentals_provider=provider)
+        result = await ctx.fundamentals(inst)
+    assert result is view
+
+
+async def test_default_screen_context_fundamentals_are_memoized(tmp_path: Path) -> None:
+    inst = Instrument(symbol="AAPL", market_code=US_NASDAQ.code)
+
+    class _CountingProvider:
+        name = "counting"
+        calls = 0
+
+        def supports(self, market: object) -> bool:
+            return True
+
+        async def get(self, i: Instrument) -> FundamentalsView | None:
+            _CountingProvider.calls += 1
+            return FundamentalsView(
+                symbol=i.symbol, market_code=i.market_code, as_of=date(2026, 1, 2)
+            )
+
+        async def get_many(self, insts: list[Instrument]) -> dict[str, FundamentalsView]:
+            raise NotImplementedError
+
+    provider = _CountingProvider()
+    with BarStore(tmp_path / "bars.duckdb") as store:
+        ctx = DefaultScreenContext(US_NASDAQ, [inst], store, fundamentals_provider=provider)
+        first = await ctx.fundamentals(inst)
+        second = await ctx.fundamentals(inst)
+
+    # Same object returned both times -- proof the provider was only called once.
+    assert first is second
+    assert _CountingProvider.calls == 1
+
+
+async def test_default_screen_context_fundamentals_memoizes_none_results(tmp_path: Path) -> None:
+    """A symbol with no fundamentals data must not be re-queried on every call."""
+    inst = Instrument(symbol="NOPE", market_code=US_NASDAQ.code)
+
+    class _CountingNoneProvider:
+        name = "counting-none"
+        calls = 0
+
+        def supports(self, market: object) -> bool:
+            return True
+
+        async def get(self, i: Instrument) -> FundamentalsView | None:
+            _CountingNoneProvider.calls += 1
+            return None
+
+        async def get_many(self, insts: list[Instrument]) -> dict[str, FundamentalsView]:
+            raise NotImplementedError
+
+    provider = _CountingNoneProvider()
+    with BarStore(tmp_path / "bars.duckdb") as store:
+        ctx = DefaultScreenContext(US_NASDAQ, [inst], store, fundamentals_provider=provider)
+        first = await ctx.fundamentals(inst)
+        second = await ctx.fundamentals(inst)
+
+    assert first is None
+    assert second is None
+    assert _CountingNoneProvider.calls == 1

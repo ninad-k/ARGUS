@@ -11,11 +11,14 @@ from typing import Any
 import structlog
 from sqlalchemy import select
 
-from argus.config import AppSettings
+from argus.config import AppSettings, get_settings
 from argus.data.prices.base import PriceDataProvider, ProviderHealth
 from argus.data.prices.composite import CompositePriceProvider
+from argus.data.prices.nse_provider import NSEProvider
 from argus.data.prices.static_provider import StaticPriceProvider
+from argus.data.prices.tv_screener_provider import TVScreenerProvider
 from argus.data.prices.yfinance_provider import YFinanceProvider
+from argus.data.universe import SeedUniverseProvider, TVUniverseProvider, UniverseProvider
 from argus.db import async_session
 from argus.db.models import DataSource
 
@@ -42,8 +45,32 @@ def build_price_provider(kind: str, config: dict[str, Any]) -> PriceDataProvider
         return YFinanceProvider()
     if kind == "static":
         return StaticPriceProvider()
+    if kind == "tvscreener":
+        return TVScreenerProvider()
+    if kind == "nse":
+        return NSEProvider()
     logger.warning("sources.build_price_provider.unknown_kind", kind=kind)
     return YFinanceProvider()
+
+
+async def resolve_universe_provider(settings: AppSettings | None = None) -> UniverseProvider:
+    """Build the pipeline's default ``UniverseProvider``.
+
+    When an enabled ``tvscreener`` ``DataSource`` row exists, use a live
+    TradingView top-liquid universe (``TVUniverseProvider``), falling back to
+    seed CSVs on any failure/empty result. Otherwise, seeds only -- matching
+    the pre-Task-9 default so installs with no configured sources keep
+    working exactly as before.
+    """
+    resolved_settings = settings or get_settings()
+    sources = await load_enabled_sources(resolved_settings)
+    tv_source = next((s for s in sources if s.kind == "tvscreener"), None)
+    if tv_source is None:
+        return SeedUniverseProvider()
+
+    tv_provider = TVScreenerProvider()
+    size = resolved_settings.data.universe_size_per_market
+    return TVUniverseProvider(tv_provider, SeedUniverseProvider(), size)
 
 
 async def build_composite_from_db(settings: AppSettings | None = None) -> CompositePriceProvider:

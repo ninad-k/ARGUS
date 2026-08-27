@@ -1,9 +1,10 @@
 """Instrument universe providers.
 
-The tradingview-screener-backed dynamic universe (scanning the live market
-for liquid names) is Phase 2 — not built here. This task only wires up
-static/seed-file universes, which is enough to get the rest of the pipeline
-running end-to-end offline.
+``TVUniverseProvider`` (Phase 2) wraps a live ``UniverseSource`` -- the
+TradingView screener's liquidity ranking, see
+``argus.data.prices.tv_screener_provider`` -- falling back to a static/seed
+universe on any failure or empty result, so a screener run never blocks on a
+flaky/unofficial upstream.
 """
 
 import csv
@@ -14,6 +15,7 @@ import structlog
 from sqlalchemy import select
 
 from argus.config import AppSettings
+from argus.data.prices.tv_screener_provider import UniverseSource
 from argus.db import async_session
 from argus.db.models import InstrumentRow
 from argus.markets import Instrument, Market
@@ -79,6 +81,39 @@ class SeedUniverseProvider:
                     Instrument(symbol=symbol, market_code=market.code, name=name, sector=sector)
                 )
         return instruments
+
+
+class TVUniverseProvider:
+    """Live top-liquid universe via a ``UniverseSource`` (the TradingView
+    screener), falling back to ``fallback`` (typically ``SeedUniverseProvider``)
+    on any failure or an empty result.
+    """
+
+    name = "tvscreener"
+
+    def __init__(
+        self, universe_source: UniverseSource, fallback: UniverseProvider, size: int
+    ) -> None:
+        self._universe_source = universe_source
+        self._fallback = fallback
+        self._size = size
+
+    async def universe(self, market: Market) -> list[Instrument]:
+        try:
+            instruments = await self._universe_source.top_liquid(market, self._size)
+        except Exception as exc:  # noqa: BLE001 -- never let a screener hiccup break the run
+            logger.warning(
+                "universe.tv_universe_provider.top_liquid_failed",
+                market=market.code,
+                error=str(exc),
+            )
+            instruments = []
+
+        if instruments:
+            return instruments
+
+        logger.info("universe.tv_universe_provider.falling_back_to_seed", market=market.code)
+        return await self._fallback.universe(market)
 
 
 async def sync_instruments_to_db(

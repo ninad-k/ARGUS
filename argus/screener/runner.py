@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
 from argus.config import AppSettings
+from argus.data.fundamentals import FundamentalsProvider
 from argus.data.store.duckdb_ohlcv import BarStore
 from argus.data.universe import UniverseProvider
 from argus.db import async_session
@@ -44,6 +45,7 @@ async def run_screen(
     universe_provider: UniverseProvider,
     strategies: list[Strategy] | None = None,
     top_n: int = 5,
+    fundamentals_provider: FundamentalsProvider | None = None,
 ) -> ScreenResult:
     """Run every applicable strategy over ``market``'s universe and rank the result.
 
@@ -52,6 +54,11 @@ async def run_screen(
     default filter chain -> hand survivors to each strategy that
     ``supports(market)`` -> fuse candidates picked by multiple strategies for
     the same (symbol, direction) -> rank by fused score, descending.
+
+    ``fundamentals_provider`` is exposed to strategies via
+    ``ScreenContext.fundamentals()`` -- defaults to ``NullFundamentalsProvider``
+    (see ``DefaultScreenContext``) when omitted, so existing callers/tests
+    are unaffected.
     """
     run_ts = datetime.now(UTC)
 
@@ -76,7 +83,13 @@ async def run_screen(
     passed, chain_rejections = chain.run(usable, features_by_symbol)
     rejections.update(chain_rejections)
 
-    ctx = DefaultScreenContext(market, passed, store, feature_cache=features_by_symbol)
+    ctx = DefaultScreenContext(
+        market,
+        passed,
+        store,
+        feature_cache=features_by_symbol,
+        fundamentals_provider=fundamentals_provider,
+    )
 
     all_candidates: list[Candidate] = []
     for strategy in applicable:

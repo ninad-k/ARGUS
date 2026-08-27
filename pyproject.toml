@@ -78,6 +78,14 @@ plugins = ["pydantic.mypy"]
 module = ["yfinance.*", "duckdb.*", "tradingview_screener.*", "nicegui.*", "apscheduler.*"]
 ignore_missing_imports = true
 
+# tradingview_screener ships a py.typed marker, so (unlike the other modules
+# above, which mypy treats as untyped) it's actually type-checked -- and its
+# __init__.py re-exports Column/Query without an explicit __all__, which
+# strict mode's implicit-reexport check rejects. Relaxed for this module only.
+[[tool.mypy.overrides]]
+module = ["tradingview_screener.*"]
+implicit_reexport = true
+
 # --- Pytest ----------------------------------------------------------------
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

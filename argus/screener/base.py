@@ -17,6 +17,11 @@ from typing import TYPE_CHECKING, Literal, Protocol
 import numpy as np
 from numpy.typing import NDArray
 
+from argus.data.fundamentals import (
+    FundamentalsProvider,
+    FundamentalsView,
+    NullFundamentalsProvider,
+)
 from argus.data.store.duckdb_ohlcv import BarStore
 from argus.indicators.features import compute_features
 from argus.markets import Instrument, Market
@@ -62,6 +67,12 @@ class ScreenContext(Protocol):
         """``compute_features`` output for ``inst``, memoized per symbol."""
         ...
 
+    async def fundamentals(self, inst: Instrument) -> FundamentalsView | None:
+        """Fundamentals view for ``inst`` from the injected provider,
+        memoized per symbol. ``None`` if the provider has no data (or no
+        fundamentals provider was configured -- the ``Null`` default)."""
+        ...
+
 
 class Strategy(ABC):
     """Base class for a screener strategy.
@@ -99,6 +110,7 @@ class DefaultScreenContext:
         instruments: list[Instrument],
         store: BarStore,
         feature_cache: dict[str, dict[str, float]] | None = None,
+        fundamentals_provider: FundamentalsProvider | None = None,
     ) -> None:
         self.market = market
         self._instruments = instruments
@@ -106,6 +118,12 @@ class DefaultScreenContext:
         self._feature_cache: dict[str, dict[str, float]] = (
             feature_cache if feature_cache is not None else {}
         )
+        self._fundamentals_provider: FundamentalsProvider = (
+            fundamentals_provider
+            if fundamentals_provider is not None
+            else NullFundamentalsProvider()
+        )
+        self._fundamentals_cache: dict[str, FundamentalsView | None] = {}
 
     async def universe(self) -> list[Instrument]:
         return list(self._instruments)
@@ -123,3 +141,10 @@ class DefaultScreenContext:
         computed = compute_features(bars)
         self._feature_cache[inst.symbol] = computed
         return computed
+
+    async def fundamentals(self, inst: Instrument) -> FundamentalsView | None:
+        if inst.symbol in self._fundamentals_cache:
+            return self._fundamentals_cache[inst.symbol]
+        view = await self._fundamentals_provider.get(inst)
+        self._fundamentals_cache[inst.symbol] = view
+        return view
