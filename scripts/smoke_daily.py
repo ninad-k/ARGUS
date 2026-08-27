@@ -23,6 +23,7 @@ from pathlib import Path
 import httpx
 
 from argus.config import get_settings
+from argus.data.fundamentals import FundamentalsProvider, NullFundamentalsProvider
 from argus.data.prices.base import PriceDataProvider
 from argus.data.prices.static_provider import StaticPriceProvider, synthetic_bars
 from argus.data.store.duckdb_ohlcv import BarStore
@@ -112,6 +113,7 @@ async def _run(args: argparse.Namespace) -> int:
     provider: PriceDataProvider
     universe_provider: UniverseProvider
     store: BarStore
+    fundamentals_provider: FundamentalsProvider | None = None
 
     if args.live:
         from argus.data.sources import build_composite_from_db, ensure_default_sources
@@ -123,6 +125,10 @@ async def _run(args: argparse.Namespace) -> int:
     else:
         provider, universe_provider = _build_offline_universe(market.code)
         store = BarStore(settings.data_dir / "smoke.duckdb")
+        # Offline mode must stay offline: the pipeline's default fundamentals
+        # provider (yfinance) would otherwise issue live lookups for the
+        # synthetic SMOKE_* symbols.
+        fundamentals_provider = NullFundamentalsProvider()
 
     try:
         report = await run_daily_pipeline(
@@ -133,6 +139,7 @@ async def _run(args: argparse.Namespace) -> int:
             provider=provider,
             store=store,
             universe_provider=universe_provider,
+            fundamentals_provider=fundamentals_provider,
         )
         if args.paper:
             await run_paper_cycle(args.market, report, store)

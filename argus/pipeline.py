@@ -24,7 +24,7 @@ from argus.advisor import (
 )
 from argus.config import AppSettings, get_settings
 from argus.config.data import DataSettings
-from argus.data.fundamentals import build_default_fundamentals
+from argus.data.fundamentals import FundamentalsProvider, build_default_fundamentals
 from argus.data.prices.base import PriceDataProvider, aclose_if_closeable
 from argus.data.sources import (
     build_composite_from_db,
@@ -113,6 +113,7 @@ async def run_daily_pipeline(
     store: BarStore | None = None,
     universe_provider: UniverseProvider | None = None,
     option_provider_factory: ProviderFactory | None = None,
+    fundamentals_provider: FundamentalsProvider | None = None,
 ) -> ScreenReport:
     """Run the full daily pipeline for ``market_code`` and persist the result.
 
@@ -179,7 +180,11 @@ async def run_daily_pipeline(
             store=resolved_store,
             universe_provider=StaticUniverseProvider({market.code: instruments}),
             top_n=top_n,
-            fundamentals_provider=build_default_fundamentals(),
+            fundamentals_provider=(
+                fundamentals_provider
+                if fundamentals_provider is not None
+                else build_default_fundamentals()
+            ),
         )
 
         chain_cache = await _annotate_orderflow(
