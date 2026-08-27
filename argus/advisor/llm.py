@@ -52,6 +52,15 @@ class LLMBackend(Protocol):
 
     async def complete(self, req: LLMRequest) -> LLMResponse: ...
 
+    async def aclose(self) -> None:
+        """Release any resources (e.g. an owned ``httpx.AsyncClient``).
+
+        A backend built from an injected ``http`` client (see
+        ``build_backend``) must NOT close it here -- the caller that
+        injected it owns its lifecycle.
+        """
+        ...
+
 
 class NoOpBackend:
     provider = "none"
@@ -60,15 +69,31 @@ class NoOpBackend:
     async def complete(self, req: LLMRequest) -> LLMResponse:
         return LLMResponse(text="", provider=self.provider, model=self.model)
 
+    async def aclose(self) -> None:
+        return None
+
 
 class AnthropicBackend:
     provider = "anthropic"
 
-    def __init__(self, *, http: httpx.AsyncClient, model: str, api_key: str, timeout_s: int = 120):
+    def __init__(
+        self,
+        *,
+        http: httpx.AsyncClient,
+        model: str,
+        api_key: str,
+        timeout_s: int = 120,
+        owns_client: bool = False,
+    ):
         self.http = http
         self.model = model
         self._api_key = api_key
         self._timeout = timeout_s
+        self._owns_client = owns_client
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self.http.aclose()
 
     async def complete(self, req: LLMRequest) -> LLMResponse:
         url = "https://api.anthropic.com/v1/messages"
@@ -106,12 +131,18 @@ class OpenAIBackend:
         api_key: str,
         base_url: str = "https://api.openai.com/v1",
         timeout_s: int = 120,
+        owns_client: bool = False,
     ):
         self.http = http
         self.model = model
         self._api_key = api_key
         self._base = base_url.rstrip("/")
         self._timeout = timeout_s
+        self._owns_client = owns_client
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self.http.aclose()
 
     async def complete(self, req: LLMRequest) -> LLMResponse:
         url = f"{self._base}/chat/completions"
@@ -157,11 +188,17 @@ class OllamaBackend:
         model: str,
         base_url: str = "http://localhost:11434",
         timeout_s: int = 120,
+        owns_client: bool = False,
     ):
         self.http = http
         self.model = model
         self._base = base_url.rstrip("/")
         self._timeout = timeout_s
+        self._owns_client = owns_client
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self.http.aclose()
 
     async def complete(self, req: LLMRequest) -> LLMResponse:
         url = f"{self._base}/api/chat"
@@ -193,6 +230,10 @@ def build_backend(settings: LLMSettings, *, http: httpx.AsyncClient | None = Non
     ``pick_reviewer.review_picks``). A missing API key for a cloud provider
     also falls back to ``NoOpBackend`` with a warning, matching DRUVA.
 
+    Callers should ``await backend.aclose()`` when done with a backend built
+    here, to release an owned ``httpx.AsyncClient``; it's a no-op if ``http``
+    was injected. See ``argus.pipeline._review_with_llm``.
+
     ``http`` is exposed mainly for tests (pass a client wired to
     ``httpx.MockTransport``); production callers can omit it and let each
     backend own a fresh ``httpx.AsyncClient``.
@@ -217,17 +258,32 @@ def build_backend(settings: LLMSettings, *, http: httpx.AsyncClient | None = Non
     # Only reached for a provider that actually needs an HTTP client -- avoids
     # constructing (and leaking) an unused ``httpx.AsyncClient`` for the
     # disabled/unknown/missing-key cases handled above.
+    #
+    # ``owns_client`` tracks whether *we* created the client here (production
+    # path) vs. it being injected (tests, wired to a ``MockTransport``): only
+    # a client we created ourselves gets closed by the backend's ``aclose()``
+    # -- closing an injected client would be surprising for a caller that
+    # still owns it.
+    owns_client = http is None
     client = http if http is not None else httpx.AsyncClient()
 
     if provider == "anthropic":
         assert api_key is not None  # narrowed above
         return AnthropicBackend(
-            http=client, model=settings.model, api_key=api_key, timeout_s=settings.timeout_seconds
+            http=client,
+            model=settings.model,
+            api_key=api_key,
+            timeout_s=settings.timeout_seconds,
+            owns_client=owns_client,
         )
     if provider == "openai":
         assert api_key is not None  # narrowed above
         return OpenAIBackend(
-            http=client, model=settings.model, api_key=api_key, timeout_s=settings.timeout_seconds
+            http=client,
+            model=settings.model,
+            api_key=api_key,
+            timeout_s=settings.timeout_seconds,
+            owns_client=owns_client,
         )
     if provider == "openai_compatible":
         return OpenAICompatibleBackend(
@@ -236,12 +292,14 @@ def build_backend(settings: LLMSettings, *, http: httpx.AsyncClient | None = Non
             api_key=api_key or "local",
             base_url=settings.base_url or "http://localhost:8000/v1",
             timeout_s=settings.timeout_seconds,
+            owns_client=owns_client,
         )
     return OllamaBackend(
         http=client,
         model=settings.model,
         base_url=settings.base_url or "http://localhost:11434",
         timeout_s=settings.timeout_seconds,
+        owns_client=owns_client,
     )
 
 

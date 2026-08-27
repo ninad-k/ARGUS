@@ -131,3 +131,38 @@ async def test_ollama_backend_raises_on_http_error() -> None:
         backend = OllamaBackend(http=client, model="gemma3:4b")
         with pytest.raises(httpx.HTTPStatusError):
             await backend.complete(LLMRequest(system="s", user="u"))
+
+
+# --- aclose / client ownership --------------------------------------------------
+
+
+async def test_build_backend_injected_http_aclose_leaves_it_open() -> None:
+    """A client passed in via ``http=`` is owned by the caller -- ``aclose()``
+    on the backend must be a no-op for it."""
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    async with httpx.AsyncClient(transport=transport) as client:
+        settings = LLMSettings(provider="ollama", _env_file=None)  # type: ignore[call-arg]
+        backend = build_backend(settings, http=client)
+
+        await backend.aclose()
+
+        assert client.is_closed is False
+
+
+async def test_build_backend_owned_http_aclose_closes_it() -> None:
+    """With no injected ``http``, ``build_backend`` creates its own client --
+    ``aclose()`` must close that owned client (the resource-leak fix)."""
+    settings = LLMSettings(provider="ollama", _env_file=None)  # type: ignore[call-arg]
+    backend = build_backend(settings)
+
+    assert isinstance(backend, OllamaBackend)
+    assert backend.http.is_closed is False
+
+    await backend.aclose()
+
+    assert backend.http.is_closed is True
+
+
+async def test_noop_backend_aclose_is_a_noop() -> None:
+    backend = NoOpBackend()
+    await backend.aclose()  # must not raise

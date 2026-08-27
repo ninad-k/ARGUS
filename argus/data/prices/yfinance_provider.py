@@ -14,9 +14,11 @@ import structlog
 import yfinance as yf
 from numpy.typing import NDArray
 
+from argus.config import get_settings
 from argus.data.prices.base import BAR_DTYPE, ProviderHealth, Quote, bars_from_columns
 from argus.markets import Instrument, Market
 from argus.markets.registry import IN_NSE
+from argus.utils.retry import retry_async
 
 logger = structlog.get_logger(__name__)
 
@@ -33,14 +35,44 @@ class YFinanceProvider:
 
     name = "yfinance"
 
+    def __init__(
+        self, *, timeout_seconds: float | None = None, max_retries: int | None = None
+    ) -> None:
+        data_settings = get_settings().data
+        self._timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else data_settings.provider_timeout_seconds
+        )
+        self._max_retries = (
+            max_retries if max_retries is not None else data_settings.provider_max_retries
+        )
+
     def supports(self, market: Market) -> bool:
         return True
 
     async def get_daily_bars(
         self, inst: Instrument, start: date, end: date
     ) -> NDArray[np.void]:
+        def _on_error(attempt: int, exc: BaseException) -> None:
+            logger.warning(
+                "yfinance.get_daily_bars.attempt_failed",
+                symbol=inst.symbol,
+                market=inst.market_code,
+                attempt=attempt,
+                # a bare TimeoutError means the call ran past our own
+                # timeout, not that yfinance itself raised
+                error=str(exc) or "timed out",
+            )
+
         try:
-            return await asyncio.to_thread(self._fetch_daily_bars, inst, start, end)
+            return await retry_async(
+                lambda: asyncio.to_thread(self._fetch_daily_bars, inst, start, end),
+                attempts=self._max_retries + 1,
+                timeout_seconds=self._timeout_seconds,
+                retry_if=lambda bars: len(bars) == 0,
+                on_error=_on_error,
+            )
         except Exception as exc:  # noqa: BLE001 — provider methods never raise
             logger.warning(
                 "yfinance.get_daily_bars.error",
@@ -82,14 +114,20 @@ class YFinanceProvider:
         )
 
     async def get_quote(self, inst: Instrument) -> Quote | None:
+        # A single attempt -- quotes are non-critical (the screener falls
+        # back to the last daily close), so unlike get_daily_bars this isn't
+        # worth retrying. Still timeout-bounded so a hung call can't block
+        # the caller (see get_daily_bars/_per_symbol_refresh_timeout).
         try:
-            return await asyncio.to_thread(self._fetch_quote, inst)
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._fetch_quote, inst), timeout=self._timeout_seconds
+            )
         except Exception as exc:  # noqa: BLE001 — provider methods never raise
             logger.warning(
                 "yfinance.get_quote.error",
                 symbol=inst.symbol,
                 market=inst.market_code,
-                error=str(exc),
+                error=str(exc) or "timed out",
             )
             return None
 
@@ -130,9 +168,13 @@ class YFinanceProvider:
 
     async def health_check(self) -> ProviderHealth:
         try:
-            bars = await asyncio.to_thread(self._health_check_sync)
+            bars = await asyncio.wait_for(
+                asyncio.to_thread(self._health_check_sync), timeout=self._timeout_seconds
+            )
         except Exception as exc:  # noqa: BLE001 — provider methods never raise
-            return ProviderHealth(ok=False, detail=str(exc), checked_at=datetime.now(UTC))
+            return ProviderHealth(
+                ok=False, detail=str(exc) or "timed out", checked_at=datetime.now(UTC)
+            )
 
         ok = len(bars) > 0
         detail = f"fetched {len(bars)} AAPL bars" if ok else "no bars returned for AAPL"

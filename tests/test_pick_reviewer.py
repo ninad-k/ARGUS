@@ -35,6 +35,9 @@ class StaticBackend:
             raise self._error
         return LLMResponse(text=self._text, provider=self.provider, model=self.model)
 
+    async def aclose(self) -> None:
+        return None
+
 
 def _static_backend(text: str = "", *, error: Exception | None = None) -> LLMBackend:
     return StaticBackend(text=text, error=error)
