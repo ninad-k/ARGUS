@@ -14,6 +14,7 @@ from argus.config.data import DataSettings
 from argus.config.llm import LLMSettings
 from argus.config.paper import PaperSettings
 from argus.config.scheduler import SchedulerSettings
+from argus.config.ui import UISettings
 
 
 class AppSettings(BaseSettings):
@@ -33,6 +34,7 @@ class AppSettings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     paper: PaperSettings = Field(default_factory=PaperSettings)
+    ui: UISettings = Field(default_factory=UISettings)
 
     @property
     def db_url(self) -> str:

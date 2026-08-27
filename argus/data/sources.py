@@ -82,6 +82,92 @@ async def ensure_default_sources(settings: AppSettings | None = None) -> None:
         await session.commit()
 
 
+async def list_sources(settings: AppSettings | None = None) -> list[DataSource]:
+    """Return every ``DataSource`` row (enabled or not), ordered by priority.
+
+    Used by the sources admin UI/API, which needs to see disabled rows too
+    (unlike ``load_enabled_sources``, used by the pipeline).
+    """
+    async with async_session(settings) as session:
+        result = await session.execute(select(DataSource).order_by(DataSource.priority))
+        return list(result.scalars().all())
+
+
+async def create_source(
+    name: str,
+    kind: str,
+    markets: list[str],
+    config: dict[str, Any],
+    priority: int = 0,
+    settings: AppSettings | None = None,
+) -> DataSource:
+    """Create and persist a new ``DataSource`` row, enabled by default."""
+    async with async_session(settings) as session:
+        source = DataSource(
+            name=name,
+            kind=kind,
+            markets_json={"markets": markets},
+            config_json=config,
+            priority=priority,
+            enabled=True,
+            last_health=None,
+            created_at=datetime.now(UTC),
+        )
+        session.add(source)
+        await session.commit()
+        await session.refresh(source)
+        return source
+
+
+async def get_source(source_id: int, settings: AppSettings | None = None) -> DataSource | None:
+    async with async_session(settings) as session:
+        return await session.get(DataSource, source_id)
+
+
+async def update_source(
+    source_id: int,
+    *,
+    name: str | None = None,
+    kind: str | None = None,
+    markets: list[str] | None = None,
+    config: dict[str, Any] | None = None,
+    priority: int | None = None,
+    enabled: bool | None = None,
+    settings: AppSettings | None = None,
+) -> DataSource | None:
+    """Apply the given (non-``None``) field updates to a source. ``None`` -> not returned."""
+    async with async_session(settings) as session:
+        source = await session.get(DataSource, source_id)
+        if source is None:
+            return None
+        if name is not None:
+            source.name = name
+        if kind is not None:
+            source.kind = kind
+        if markets is not None:
+            source.markets_json = {"markets": markets}
+        if config is not None:
+            source.config_json = config
+        if priority is not None:
+            source.priority = priority
+        if enabled is not None:
+            source.enabled = enabled
+        await session.commit()
+        await session.refresh(source)
+        return source
+
+
+async def delete_source(source_id: int, settings: AppSettings | None = None) -> bool:
+    """Delete a source by id. Returns whether a row was actually deleted."""
+    async with async_session(settings) as session:
+        source = await session.get(DataSource, source_id)
+        if source is None:
+            return False
+        await session.delete(source)
+        await session.commit()
+        return True
+
+
 async def check_source_health(
     source: DataSource, settings: AppSettings | None = None
 ) -> ProviderHealth:
