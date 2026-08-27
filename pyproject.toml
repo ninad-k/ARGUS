@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus"
+version = "0.1.0"
+description = "ARGUS — AI-assisted US+India stock screener with paper trading"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Ninad K" }]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "nicegui",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite",
+    "duckdb",
+    "pyarrow",
+    "pandas",
+    "numpy",
+    "httpx",
+    "pydantic>=2",
+    "pydantic-settings",
+    "apscheduler",
+    "yfinance",
+    "tradingview-screener",
+    "python-dateutil",
+    "structlog",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+]
+
+[project.scripts]
+argus = "argus.main:run"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["argus*"]
+
+# --- Ruff ------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",       # pycodestyle + pyflakes
+    "I",                 # isort
+    "B",                 # bugbear
+    "UP",                # pyupgrade
+    "N",                 # pep8-naming
+    "ASYNC",             # async pitfalls
+    "S",                 # bandit (security)
+    "SIM",               # simplifications
+    "RET",               # return improvements
+]
+ignore = ["S101"]        # allow `assert` in tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "N802", "N803"]
+
+# --- MyPy ------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["yfinance.*", "duckdb.*", "tradingview_screener.*", "nicegui.*", "apscheduler.*"]
+ignore_missing_imports = true
+
+# --- Pytest ----------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "unit: fast isolated tests",
+    "integration: tests requiring DB/external services",
+]
