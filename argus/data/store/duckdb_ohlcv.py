@@ -6,6 +6,7 @@ Async callers (the scheduler, refresh jobs) should wrap calls in
 """
 
 import asyncio
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
@@ -37,11 +38,24 @@ CREATE TABLE IF NOT EXISTS daily_bars (
 
 
 class BarStore:
-    """DuckDB-backed cache of daily OHLCV bars, keyed by (market, symbol, ts)."""
+    """DuckDB-backed cache of daily OHLCV bars, keyed by (market, symbol, ts).
+
+    A single ``duckdb.DuckDBPyConnection`` is not safe for concurrent use
+    from multiple threads. Callers are expected to reach every query through
+    ``asyncio.to_thread`` (see ``refresh_bars`` below) so that, from the
+    caller's point of view, this class behaves as if it were async -- but
+    that also means two ``to_thread`` calls against the *same* store (e.g.
+    concurrent ``refresh_bars`` calls under a bounded-concurrency pipeline)
+    can land on the connection from two different OS threads at once.
+    ``_lock`` serializes those, since it's a ``threading.Lock`` rather than
+    an ``asyncio.Lock`` (which would only protect against other coroutines
+    on the same event loop thread, not against this).
+    """
 
     def __init__(self, db_path: Path | str) -> None:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(_SCHEMA)
 
@@ -76,18 +90,19 @@ class BarStore:
                 "volume": bars["volume"],
             }
         )
-        self._conn.register("_argus_upsert_frame", frame)
-        try:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO daily_bars
-                    (market, symbol, ts, open, high, low, close, volume)
-                SELECT market, symbol, ts, open, high, low, close, volume
-                FROM _argus_upsert_frame
-                """
-            )
-        finally:
-            self._conn.unregister("_argus_upsert_frame")
+        with self._lock:
+            self._conn.register("_argus_upsert_frame", frame)
+            try:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO daily_bars
+                        (market, symbol, ts, open, high, low, close, volume)
+                    SELECT market, symbol, ts, open, high, low, close, volume
+                    FROM _argus_upsert_frame
+                    """
+                )
+            finally:
+                self._conn.unregister("_argus_upsert_frame")
         return int(len(frame))
 
     def get_bars(
@@ -114,7 +129,8 @@ class BarStore:
             """
             params = [market_code, symbol]
 
-        rows = self._conn.execute(query, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
         if not rows:
             return np.zeros(0, dtype=BAR_DTYPE)
 
@@ -129,20 +145,22 @@ class BarStore:
         )
 
     def last_ts(self, market_code: str, symbol: str) -> datetime | None:
-        row = self._conn.execute(
-            "SELECT MAX(ts) FROM daily_bars WHERE market = ? AND symbol = ?",
-            [market_code, symbol],
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MAX(ts) FROM daily_bars WHERE market = ? AND symbol = ?",
+                [market_code, symbol],
+            ).fetchone()
         if row is None or row[0] is None:
             return None
         value = row[0]
         return value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
 
     def symbols(self, market_code: str) -> list[str]:
-        rows = self._conn.execute(
-            "SELECT DISTINCT symbol FROM daily_bars WHERE market = ? ORDER BY symbol",
-            [market_code],
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT symbol FROM daily_bars WHERE market = ? ORDER BY symbol",
+                [market_code],
+            ).fetchall()
         return [str(r[0]) for r in rows]
 
 
