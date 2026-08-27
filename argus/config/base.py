@@ -15,6 +15,7 @@ from argus.config.llm import LLMSettings
 from argus.config.paper import PaperSettings
 from argus.config.scheduler import SchedulerSettings
 from argus.config.ui import UISettings
+from argus.config.webhooks import WebhookSettings
 
 
 class AppSettings(BaseSettings):
@@ -35,6 +36,7 @@ class AppSettings(BaseSettings):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     ui: UISettings = Field(default_factory=UISettings)
+    webhooks: WebhookSettings = Field(default_factory=WebhookSettings)
 
     @property
     def db_url(self) -> str:

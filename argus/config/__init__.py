@@ -6,6 +6,7 @@ from argus.config.llm import LLMSettings
 from argus.config.paper import PaperSettings
 from argus.config.scheduler import SchedulerSettings
 from argus.config.ui import UISettings
+from argus.config.webhooks import WebhookSettings
 
 __all__ = [
     "AppSettings",
@@ -14,5 +15,6 @@ __all__ = [
     "PaperSettings",
     "SchedulerSettings",
     "UISettings",
+    "WebhookSettings",
     "get_settings",
 ]

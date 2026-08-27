@@ -66,6 +66,16 @@ async def settings_page() -> None:
             ui.label(f"Data dir: {settings.data_dir}")
 
         with ui.card():
+            ui.label("Webhooks").classes("text-lg font-bold")
+            webhook_enabled = bool(settings.webhooks.tradingview_token)
+            status = "enabled" if webhook_enabled else "disabled (no token configured)"
+            ui.label(f"TradingView webhook: {status}")
+            if webhook_enabled:
+                ui.label("Endpoint: POST /api/v1/webhooks/tradingview/<token>").classes(
+                    "text-sm text-gray-500"
+                )
+
+        with ui.card():
             ui.label("Scheduler").classes("text-lg font-bold")
             ui.label(f"Enabled: {settings.scheduler.enabled}")
             if settings.scheduler.enabled:
