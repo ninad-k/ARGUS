@@ -103,3 +103,55 @@ class SourceTestResult(BaseModel):
     ok: bool
     detail: str
     checked_at: datetime
+
+
+class PaperOrderOut(BaseModel):
+    id: int
+    pick_id: int | None
+    symbol: str
+    market: str
+    side: str
+    qty: float
+    order_type: str
+    status: str
+    fill_price: float | None
+    slippage_bps: float | None
+    created_at: datetime
+    filled_at: datetime | None
+
+
+class PaperPositionOut(BaseModel):
+    id: int
+    symbol: str
+    market: str
+    qty: float
+    avg_price: float
+    opened_at: datetime
+    closed_at: datetime | None
+    realized_pnl: float | None
+
+
+class PaperEquityPointOut(BaseModel):
+    id: int
+    date: datetime
+    market: str
+    cash: float
+    positions_value: float
+    total_pnl: float
+
+
+class PaperPositionsResponse(BaseModel):
+    positions: list[PaperPositionOut]
+
+
+class PaperOrdersResponse(BaseModel):
+    orders: list[PaperOrderOut]
+
+
+class PaperEquityResponse(BaseModel):
+    points: list[PaperEquityPointOut]
+
+
+class PaperResetResponse(BaseModel):
+    ok: bool
+    detail: str

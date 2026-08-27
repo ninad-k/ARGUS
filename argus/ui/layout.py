@@ -7,6 +7,7 @@ from nicegui import ui
 _PAGES: tuple[tuple[str, str], ...] = (
     ("Dashboard", "/"),
     ("Picks", "/picks"),
+    ("Paper", "/paper"),
     ("Sources", "/sources"),
     ("Settings", "/settings"),
 )

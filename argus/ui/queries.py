@@ -12,10 +12,11 @@ from sqlalchemy import select
 
 from argus.config import AppSettings, get_settings
 from argus.db import async_session
-from argus.db.models import DailyPick, ScreenRun
+from argus.db.models import DailyPick, PaperEquityPoint, PaperOrder, PaperPosition, ScreenRun
 from argus.markets import all_markets
 
 _RECENT_RUNS_LIMIT = 20
+_RECENT_PAPER_ORDERS_LIMIT = 50
 
 
 async def latest_run_for_market(
@@ -63,3 +64,44 @@ async def top_picks_across_markets(settings: AppSettings | None = None) -> list[
         picks.extend(await picks_for_run(run.id, settings))
     picks.sort(key=lambda p: p.score, reverse=True)
     return picks
+
+
+async def open_paper_positions(settings: AppSettings | None = None) -> list[PaperPosition]:
+    settings = settings or get_settings()
+    async with async_session(settings) as session:
+        result = await session.execute(
+            select(PaperPosition)
+            .where(PaperPosition.closed_at.is_(None))
+            .order_by(PaperPosition.opened_at.desc())
+        )
+        return list(result.scalars().all())
+
+
+async def recent_paper_orders(
+    limit: int = _RECENT_PAPER_ORDERS_LIMIT, settings: AppSettings | None = None
+) -> list[PaperOrder]:
+    settings = settings or get_settings()
+    async with async_session(settings) as session:
+        result = await session.execute(
+            select(PaperOrder).order_by(PaperOrder.created_at.desc()).limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+async def paper_equity_points(settings: AppSettings | None = None) -> list[PaperEquityPoint]:
+    settings = settings or get_settings()
+    async with async_session(settings) as session:
+        result = await session.execute(
+            select(PaperEquityPoint).order_by(PaperEquityPoint.date.asc())
+        )
+        return list(result.scalars().all())
+
+
+async def total_realized_pnl(settings: AppSettings | None = None) -> float:
+    """Sum of realized P&L across every position (open or closed) that has
+    ever had a sell fill applied to it."""
+    settings = settings or get_settings()
+    async with async_session(settings) as session:
+        result = await session.execute(select(PaperPosition.realized_pnl))
+        values: list[float] = [v for (v,) in result.all() if v is not None]
+    return round(sum(values), 2)
