@@ -10,7 +10,7 @@ scheduler jobs (``argus.jobs.scheduler``) and the smoke-run CLI
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import structlog
 
@@ -35,6 +35,13 @@ from argus.data.store.duckdb_ohlcv import BarStore, refresh_bars
 from argus.data.universe import StaticUniverseProvider, UniverseProvider, sync_instruments_to_db
 from argus.db import init_db
 from argus.markets import Instrument, Market, get_market
+from argus.options.suggester import (
+    DerivativeSuggestion,
+    ProviderFactory,
+    RiskLevel,
+    persist_suggestions,
+    suggest_for_picks,
+)
 from argus.screener.runner import ScreenResult, persist_screen_result, run_screen
 
 logger = structlog.get_logger(__name__)
@@ -77,6 +84,11 @@ class ScreenReport:
     bars_refreshed: int
     symbols_failed: list[str]
     llm_used: bool
+    # Derivative ideas (Task 12) keyed by symbol, for whichever of
+    # ``result.top`` had one -- empty when ``settings.options.enabled`` is
+    # off, no pick's instrument has options/futures, or the suggestion step
+    # failed (it never raises into the pipeline, see ``_suggest_derivatives``).
+    suggestions: dict[str, DerivativeSuggestion] = field(default_factory=dict)
 
 
 async def run_daily_pipeline(
@@ -88,6 +100,7 @@ async def run_daily_pipeline(
     provider: PriceDataProvider | None = None,
     store: BarStore | None = None,
     universe_provider: UniverseProvider | None = None,
+    option_provider_factory: ProviderFactory | None = None,
 ) -> ScreenReport:
     """Run the full daily pipeline for ``market_code`` and persist the result.
 
@@ -95,7 +108,8 @@ async def run_daily_pipeline(
     the universe and sync it to the DB -> (optionally) refresh OHLCV bars for
     every instrument, with bounded concurrency and per-symbol failure
     tolerance -> run the screener -> (optionally) get an LLM review of the
-    top picks -> persist the ``ScreenRun``/``DailyPick`` rows.
+    top picks -> persist the ``ScreenRun``/``DailyPick`` rows -> (optionally)
+    attach derivative suggestions to the top picks.
 
     ``provider``/``store``/``universe_provider`` are injection points for
     tests and the smoke-run script; when omitted, production defaults are
@@ -103,7 +117,10 @@ async def run_daily_pipeline(
     closed before returning (``provider`` only if it implements
     ``CloseablePriceProvider``, e.g. a ``CompositePriceProvider`` fanning out
     to an ``NSEProvider``); a caller-supplied ``store``/``provider`` is left
-    open for the caller to manage.
+    open for the caller to manage. ``option_provider_factory`` is the same
+    kind of injection point for ``argus.options.suggester.suggest_for_picks``
+    -- tests pass a factory serving a ``StaticOptionChainProvider`` instead
+    of hitting a live options data source.
     """
     settings = get_settings()
     market = get_market(market_code)
@@ -159,13 +176,20 @@ async def run_daily_pipeline(
 
         run_id = await persist_screen_result(result, settings)
 
-        return ScreenReport(
+        report = ScreenReport(
             result=result,
             run_id=run_id,
             bars_refreshed=bars_refreshed,
             symbols_failed=symbols_failed,
             llm_used=llm_used,
         )
+
+        if settings.options.enabled:
+            report.suggestions = await _suggest_derivatives(
+                report, settings, option_provider_factory
+            )
+
+        return report
     finally:
         if owns_store:
             resolved_store.close()
@@ -220,6 +244,42 @@ async def _refresh_all(
 
     await asyncio.gather(*(_one(inst) for inst in instruments))
     return total_added, failed
+
+
+async def _suggest_derivatives(
+    report: ScreenReport,
+    settings: AppSettings,
+    option_provider_factory: ProviderFactory | None,
+) -> dict[str, DerivativeSuggestion]:
+    """Attach derivative suggestions to ``report``'s top picks (Task 12).
+
+    Exception-contained: a bad risk-level string, a suggester bug, or a DB
+    hiccup while persisting degrades to "no suggestions" rather than
+    breaking the pipeline -- ``suggest_for_picks``/``persist_suggestions``
+    already never raise on their own, this is belt-and-braces around them
+    plus the ``RiskLevel(...)`` parse.
+    """
+    try:
+        risk = RiskLevel(settings.options.risk_level)
+    except ValueError:
+        logger.warning(
+            "pipeline.option_suggestions.bad_risk_level", risk_level=settings.options.risk_level
+        )
+        risk = RiskLevel.MODERATE
+
+    try:
+        suggestions = await suggest_for_picks(
+            report,
+            risk=risk,
+            settings=settings.options,
+            provider_factory=option_provider_factory,
+        )
+        if suggestions:
+            await persist_suggestions(report.run_id, suggestions, risk, settings)
+        return suggestions
+    except Exception as exc:  # noqa: BLE001 -- must never break the pipeline
+        logger.warning("pipeline.option_suggestions.failed", error=str(exc))
+        return {}
 
 
 async def _review_with_llm(result: ScreenResult, market: Market, settings: AppSettings) -> bool:
