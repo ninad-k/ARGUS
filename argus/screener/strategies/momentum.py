@@ -15,6 +15,7 @@ import math
 from argus.markets import Instrument
 from argus.screener.base import Candidate, ScreenContext, Strategy
 from argus.screener.registry import register_strategy
+from argus.screener.scoring import percentile_rank
 
 _RSI_BLOWOFF = 80.0
 _ATR_STOP_MULT = 2.0
@@ -23,15 +24,6 @@ _ROC_60_WEIGHT = 0.6
 _ROC_20_WEIGHT = 0.4
 
 _REQUIRED_FEATURES = ("close", "sma_50", "sma_200", "rsi_14", "roc_20", "roc_60", "atr_14")
-
-
-def _percentile_rank(values: list[float], value: float) -> float:
-    """Percentile rank of ``value`` within ``values``, 0-100 (100 = highest)."""
-    n = len(values)
-    if n <= 1:
-        return 100.0
-    below_or_equal = sum(1 for v in values if v <= value)
-    return 100.0 * (below_or_equal - 1) / (n - 1)
 
 
 @register_strategy
@@ -56,8 +48,8 @@ class MomentumStrategy(Strategy):
 
         candidates: list[Candidate] = []
         for inst, features in gated:
-            rank_60 = _percentile_rank(roc_60_values, features["roc_60"])
-            rank_20 = _percentile_rank(roc_20_values, features["roc_20"])
+            rank_60 = percentile_rank(roc_60_values, features["roc_60"])
+            rank_20 = percentile_rank(roc_20_values, features["roc_20"])
             score = _ROC_60_WEIGHT * rank_60 + _ROC_20_WEIGHT * rank_20
 
             close = features["close"]
