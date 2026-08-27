@@ -6,9 +6,11 @@ as ``YFinanceProvider.get_quote``) and bounded by
 ``DataSettings.provider_timeout_seconds``. Never raises: any failure is
 logged and ``None`` is returned instead.
 
-``debt_to_equity`` is the one field yfinance reports as a percentage (e.g.
-``148.75`` for a D/E of ~1.49) rather than a plain ratio -- normalized here
-by dividing by 100 so it matches every other ratio field's convention.
+``debt_to_equity`` and ``dividendYield`` are the fields yfinance reports as
+percentages rather than plain ratios/fractions -- ``debt_to_equity`` as e.g.
+``148.75`` for a D/E of ~1.49, ``dividendYield`` as e.g. ``0.35`` for a
+dividend yield of 0.35% (not 35%) -- both normalized here by dividing by 100
+so they match every other ratio field's fraction convention.
 """
 
 from __future__ import annotations
@@ -73,6 +75,7 @@ class YFinanceFundamentalsProvider:
 
 def _view_from_info(inst: Instrument, info: dict[str, Any]) -> FundamentalsView:
     debt_to_equity_pct = _to_float(info.get("debtToEquity"))
+    dividend_yield_pct = _to_float(info.get("dividendYield"))
     return FundamentalsView(
         symbol=inst.symbol,
         market_code=inst.market_code,
@@ -86,7 +89,7 @@ def _view_from_info(inst: Instrument, info: dict[str, Any]) -> FundamentalsView:
         debt_to_equity=debt_to_equity_pct / 100.0 if debt_to_equity_pct is not None else None,
         revenue_growth=_to_float(info.get("revenueGrowth")),
         earnings_growth=_to_float(info.get("earningsGrowth")),
-        dividend_yield=_to_float(info.get("dividendYield")),
+        dividend_yield=dividend_yield_pct / 100.0 if dividend_yield_pct is not None else None,
         profit_margin=_to_float(info.get("profitMargins")),
         sector=_to_str(info.get("sector")),
     )

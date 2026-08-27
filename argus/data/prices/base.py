@@ -8,7 +8,7 @@ DuckDB/Parquet.
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -91,3 +91,24 @@ class PriceDataProvider(Protocol):
     async def health_check(self) -> ProviderHealth:
         """Cheap self-check used by the source registry."""
         ...
+
+
+@runtime_checkable
+class CloseablePriceProvider(Protocol):
+    """Optional capability: a provider that owns a resource (e.g. an
+    ``httpx.AsyncClient``, see ``NSEProvider``) needing explicit cleanup on
+    shutdown. Not part of ``PriceDataProvider`` itself since most providers
+    are stateless -- checked structurally via ``isinstance`` (this Protocol
+    is ``@runtime_checkable``) wherever a provider might need closing, e.g.
+    ``CompositePriceProvider.aclose`` and ``aclose_if_closeable`` below.
+    """
+
+    async def aclose(self) -> None:
+        """Release any owned resources. Safe to call even if nothing needs closing."""
+        ...
+
+
+async def aclose_if_closeable(provider: PriceDataProvider) -> None:
+    """Close ``provider`` if it implements ``CloseablePriceProvider``, else no-op."""
+    if isinstance(provider, CloseablePriceProvider):
+        await provider.aclose()

@@ -172,6 +172,19 @@ async def test_tv_provider_get_quote_query_failure_returns_none_never_raises(
     assert quote is None
 
 
+async def test_tv_provider_get_quote_mismatched_row_name_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row whose ``name`` doesn't match the requested symbol must not be
+    trusted as that instrument's quote -- fail closed instead."""
+    _mock_scanner_data([{"name": "MSFT", "close": 420.0, "change": 1.0}], monkeypatch)
+    provider = TVScreenerProvider(timeout_seconds=5.0)
+
+    quote = await provider.get_quote(Instrument(symbol="AAPL", market_code=US_NASDAQ.code))
+
+    assert quote is None
+
+
 async def test_tv_provider_get_quote_unsupported_market_returns_none() -> None:
     provider = TVScreenerProvider(timeout_seconds=5.0)
     quote = await provider.get_quote(Instrument(symbol="X", market_code="UNKNOWN_MARKET"))
@@ -191,8 +204,18 @@ async def test_tv_provider_get_daily_bars_always_empty() -> None:
 
 async def test_tv_provider_top_liquid_parses_canned_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = [
-        {"name": "NVDA", "description": "NVIDIA Corporation", "sector": "Electronic Technology"},
-        {"name": "META", "description": "Meta Platforms, Inc.", "sector": "Technology Services"},
+        {
+            "name": "NVDA",
+            "description": "NVIDIA Corporation",
+            "sector": "Electronic Technology",
+            "ticker": "NASDAQ:NVDA",
+        },
+        {
+            "name": "META",
+            "description": "Meta Platforms, Inc.",
+            "sector": "Technology Services",
+            "ticker": "NASDAQ:META",
+        },
     ]
     _mock_scanner_data(rows, monkeypatch)
     provider = TVScreenerProvider(timeout_seconds=5.0)
@@ -202,6 +225,38 @@ async def test_tv_provider_top_liquid_parses_canned_rows(monkeypatch: pytest.Mon
     assert [i.symbol for i in instruments] == ["NVDA", "META"]
     assert instruments[0].name == "NVIDIA Corporation"
     assert instruments[0].sector == "Electronic Technology"
+    assert all(i.market_code == US_NASDAQ.code for i in instruments)
+
+
+async def test_tv_provider_top_liquid_excludes_mismatched_exchange_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both US markets map to TV's single "america" market (see
+    ``_TV_MARKET_BY_CODE``), so a live query can return rows from either
+    exchange mixed together -- ``top_liquid`` must filter out any row whose
+    ``ticker`` prefix doesn't match the requested market's exchange, even
+    though the mock here ignores the query's own ``exchange`` filter and
+    would otherwise let a NYSE row leak into a NASDAQ result."""
+    rows = [
+        {
+            "name": "NVDA",
+            "description": "NVIDIA Corporation",
+            "sector": "Electronic Technology",
+            "ticker": "NASDAQ:NVDA",
+        },
+        {
+            "name": "KO",
+            "description": "Coca-Cola Co",
+            "sector": "Consumer Non-Durables",
+            "ticker": "NYSE:KO",
+        },
+    ]
+    _mock_scanner_data(rows, monkeypatch)
+    provider = TVScreenerProvider(timeout_seconds=5.0)
+
+    instruments = await provider.top_liquid(US_NASDAQ, n=2)
+
+    assert [i.symbol for i in instruments] == ["NVDA"]
     assert all(i.market_code == US_NASDAQ.code for i in instruments)
 
 

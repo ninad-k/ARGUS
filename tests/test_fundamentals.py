@@ -36,7 +36,7 @@ _CANNED_INFO: dict[str, Any] = {
     "debtToEquity": 148.75,  # yfinance reports this as a percent, not a fraction
     "revenueGrowth": 0.153,
     "earningsGrowth": 0.12,
-    "dividendYield": 0.44,
+    "dividendYield": 0.44,  # yfinance reports this as a percent too, not a fraction
     "profitMargins": 0.243,
     "sector": "Technology",
 }
@@ -60,7 +60,7 @@ def test_view_from_info_maps_fields_and_normalizes_debt_to_equity() -> None:
     assert view.debt_to_equity == pytest.approx(1.4875)  # 148.75% -> 1.4875
     assert view.revenue_growth == 0.153
     assert view.earnings_growth == 0.12
-    assert view.dividend_yield == 0.44
+    assert view.dividend_yield == pytest.approx(0.0044)  # 0.44% -> 0.0044
     assert view.profit_margin == 0.243
     assert view.sector == "Technology"
     assert view.as_of == date.today()  # noqa: DTZ011

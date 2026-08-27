@@ -88,3 +88,25 @@ async def test_composite_supports_reflects_underlying_providers() -> None:
     composite = CompositePriceProvider([us_only])
     assert composite.supports(US_NASDAQ) is True
     assert composite.supports(IN_NSE) is False
+
+
+@dataclass
+class _CloseableFakeProvider(_FakeProvider):
+    """A ``_FakeProvider`` that also owns a closeable resource, mirroring
+    ``NSEProvider``'s ``httpx.AsyncClient`` -- exercises
+    ``CompositePriceProvider.aclose``'s structural ``aclose`` detection."""
+
+    closed: bool = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def test_composite_aclose_closes_members_that_have_aclose() -> None:
+    closeable = _CloseableFakeProvider(name="closeable", supported_markets={"US_NASDAQ"})
+    plain = _FakeProvider(name="plain", supported_markets={"US_NASDAQ"})
+    composite = CompositePriceProvider([closeable, plain])
+
+    await composite.aclose()  # must not raise for `plain`, which has no aclose
+
+    assert closeable.closed is True

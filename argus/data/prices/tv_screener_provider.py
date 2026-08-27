@@ -11,9 +11,20 @@ dollar volume traded.
 Column names verified empirically against the installed ``tradingview-screener``
 3.2.1 (see ``argus.data.fundamentals.tv_fundamentals`` module docstring for
 how -- unknown columns silently return ``None`` rather than raising):
-``name`` (ticker), ``description`` (company name), ``sector``, ``close``,
-``change`` (percent change from prior close), ``Value.Traded`` (dollar/rupee
-volume traded), ``market_cap_basic``.
+``name`` (bare symbol, e.g. ``"NVDA"``), ``description`` (company name),
+``sector``, ``close``, ``change`` (percent change from prior close),
+``Value.Traded`` (dollar/rupee volume traded), ``market_cap_basic``,
+``exchange`` (filterable column, e.g. ``"NASDAQ"``/``"NYSE"``/``"NSE"``).
+``ticker`` (``"EXCHANGE:SYMBOL"``, e.g. ``"NASDAQ:NVDA"``) is always present
+in the result regardless of ``.select()`` -- the library includes it as an
+implicit first column.
+
+US_NYSE and US_NASDAQ both map to TV's single "america" market (see
+``_TV_MARKET_BY_CODE``), so a market-level query alone can't separate them --
+``top_liquid`` additionally filters by the ``exchange`` column and
+cross-checks each row's ``ticker`` prefix (see ``_TV_EXCHANGE_BY_CODE``,
+``_ticker_matches_exchange``) to avoid mislabeling e.g. a NYSE row as
+NASDAQ.
 """
 
 from __future__ import annotations
@@ -38,6 +49,17 @@ _TV_MARKET_BY_CODE = {
     US_NYSE.code: "america",
     US_NASDAQ.code: "america",
     IN_NSE.code: "india",
+}
+
+# US_NYSE and US_NASDAQ both map to the single TV "america" market above, so
+# a plain market-level query can't tell them apart -- rows come back mixing
+# both exchanges (observed live: querying "america" returned both
+# NASDAQ:NVDA and NYSE:KO). This maps each of our market codes to the TV
+# ``exchange`` column value so ``top_liquid`` can filter/verify per-exchange.
+_TV_EXCHANGE_BY_CODE = {
+    US_NYSE.code: "NYSE",
+    US_NASDAQ.code: "NASDAQ",
+    IN_NSE.code: "NSE",
 }
 
 # Floor market cap filter for top_liquid -- keeps micro-caps/illiquid shells
@@ -115,9 +137,10 @@ class TVScreenerProvider:
         tv_market = _TV_MARKET_BY_CODE.get(market.code)
         if tv_market is None:
             return []
+        exchange = _TV_EXCHANGE_BY_CODE.get(market.code)
         try:
             rows = await asyncio.wait_for(
-                asyncio.to_thread(self._top_liquid_query_sync, tv_market, n),
+                asyncio.to_thread(self._top_liquid_query_sync, tv_market, exchange, n),
                 timeout=self._timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001 -- provider methods never raise
@@ -134,6 +157,18 @@ class TVScreenerProvider:
             symbol = _to_str(row.get("name"))
             if not symbol:
                 continue
+            # Belt-and-braces on top of the query's own exchange filter --
+            # skip (fail closed) any row whose ``ticker`` ("EXCHANGE:SYMBOL")
+            # prefix doesn't match the requested market's exchange, rather
+            # than trusting the query filter alone. See module/class docs.
+            if exchange is not None and not _ticker_matches_exchange(row.get("ticker"), exchange):
+                logger.warning(
+                    "tvscreener.top_liquid.exchange_mismatch",
+                    market=market.code,
+                    expected_exchange=exchange,
+                    ticker=row.get("ticker"),
+                )
+                continue
             instruments.append(
                 Instrument(
                     symbol=symbol,
@@ -144,11 +179,16 @@ class TVScreenerProvider:
             )
         return instruments
 
-    def _top_liquid_query_sync(self, tv_market: str, n: int) -> list[dict[str, Any]]:
+    def _top_liquid_query_sync(
+        self, tv_market: str, exchange: str | None, n: int
+    ) -> list[dict[str, Any]]:
+        conditions = [Column("market_cap_basic") > _MIN_MARKET_CAP]
+        if exchange is not None:
+            conditions.append(Column("exchange") == exchange)
         query = (
             Query()
             .select("name", "description", "sector")
-            .where(Column("market_cap_basic") > _MIN_MARKET_CAP)
+            .where(*conditions)
             .set_markets(tv_market)
             .order_by("Value.Traded", ascending=False)
             .limit(n)
@@ -160,7 +200,7 @@ class TVScreenerProvider:
     async def health_check(self) -> ProviderHealth:
         try:
             rows = await asyncio.wait_for(
-                asyncio.to_thread(self._top_liquid_query_sync, "america", 5),
+                asyncio.to_thread(self._top_liquid_query_sync, "america", None, 5),
                 timeout=self._timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001 -- provider methods never raise
@@ -173,6 +213,12 @@ class TVScreenerProvider:
 
 
 def _quote_from_row(inst: Instrument, row: dict[str, Any]) -> Quote | None:
+    # The query filters on ``Column("name").isin(symbols)``, but a row is
+    # trusted as *the* match for ``inst`` here without re-checking that --
+    # guard against a mismatched row (e.g. a scanner quirk) by failing closed
+    # rather than silently attaching the wrong quote to ``inst``.
+    if _to_str(row.get("name")) != inst.symbol:
+        return None
     close = _to_float(row.get("close"))
     if close is None:
         return None
@@ -201,6 +247,16 @@ def _to_float(value: Any) -> float | None:
     if f != f:  # NaN guard -- pandas hands back NaN (not None) for missing numeric cells
         return None
     return f
+
+
+def _ticker_matches_exchange(ticker: Any, exchange: str) -> bool:
+    """Whether ``ticker`` (the scanner's ``"EXCHANGE:SYMBOL"`` column) carries
+    the expected exchange prefix. Missing/malformed values fail closed."""
+    ticker_str = _to_str(ticker)
+    if ticker_str is None:
+        return False
+    prefix = ticker_str.split(":", 1)[0]
+    return prefix == exchange
 
 
 def _to_str(value: Any) -> str | None:

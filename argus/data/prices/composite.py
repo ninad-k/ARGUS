@@ -6,7 +6,13 @@ import numpy as np
 import structlog
 from numpy.typing import NDArray
 
-from argus.data.prices.base import BAR_DTYPE, PriceDataProvider, ProviderHealth, Quote
+from argus.data.prices.base import (
+    BAR_DTYPE,
+    PriceDataProvider,
+    ProviderHealth,
+    Quote,
+    aclose_if_closeable,
+)
 from argus.markets import Instrument, Market
 from argus.markets.registry import get_market
 
@@ -65,6 +71,13 @@ class CompositePriceProvider:
         pairs = zip(self._providers, results, strict=True)
         detail = "; ".join(f"{p.name}={r.detail}" for p, r in pairs) or "no providers configured"
         return ProviderHealth(ok=ok, detail=detail, checked_at=datetime.now(UTC))
+
+    async def aclose(self) -> None:
+        """Close every member provider that owns a closeable resource (e.g.
+        ``NSEProvider``'s ``httpx.AsyncClient``). Members with nothing to
+        close (most providers) are no-ops via ``aclose_if_closeable``."""
+        for provider in self._providers:
+            await aclose_if_closeable(provider)
 
 
 def _market_for(inst: Instrument) -> Market | None:

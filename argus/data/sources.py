@@ -12,7 +12,7 @@ import structlog
 from sqlalchemy import select
 
 from argus.config import AppSettings, get_settings
-from argus.data.prices.base import PriceDataProvider, ProviderHealth
+from argus.data.prices.base import PriceDataProvider, ProviderHealth, aclose_if_closeable
 from argus.data.prices.composite import CompositePriceProvider
 from argus.data.prices.nse_provider import NSEProvider
 from argus.data.prices.static_provider import StaticPriceProvider
@@ -53,24 +53,42 @@ def build_price_provider(kind: str, config: dict[str, Any]) -> PriceDataProvider
     return YFinanceProvider()
 
 
-async def resolve_universe_provider(settings: AppSettings | None = None) -> UniverseProvider:
-    """Build the pipeline's default ``UniverseProvider``.
+async def resolve_universe_provider(
+    market_code: str, settings: AppSettings | None = None
+) -> UniverseProvider:
+    """Build the pipeline's default ``UniverseProvider`` for ``market_code``.
 
-    When an enabled ``tvscreener`` ``DataSource`` row exists, use a live
-    TradingView top-liquid universe (``TVUniverseProvider``), falling back to
-    seed CSVs on any failure/empty result. Otherwise, seeds only -- matching
-    the pre-Task-9 default so installs with no configured sources keep
-    working exactly as before.
+    When an enabled ``tvscreener`` ``DataSource`` row exists *and is scoped to
+    cover* ``market_code`` (its ``markets_json`` list is empty -- meaning all
+    markets -- or contains ``market_code``), use a live TradingView top-liquid
+    universe (``TVUniverseProvider``), falling back to seed CSVs on any
+    failure/empty result. Otherwise, seeds only -- matching the pre-Task-9
+    default so installs with no configured sources keep working exactly as
+    before, and so an operator who scopes a tvscreener source to e.g. IN_NSE
+    only doesn't silently get TV universes for US markets too.
     """
     resolved_settings = settings or get_settings()
     sources = await load_enabled_sources(resolved_settings)
-    tv_source = next((s for s in sources if s.kind == "tvscreener"), None)
+    tv_source = next(
+        (s for s in sources if s.kind == "tvscreener" and _source_covers_market(s, market_code)),
+        None,
+    )
     if tv_source is None:
         return SeedUniverseProvider()
 
     tv_provider = TVScreenerProvider()
     size = resolved_settings.data.universe_size_per_market
     return TVUniverseProvider(tv_provider, SeedUniverseProvider(), size)
+
+
+def _source_covers_market(source: DataSource, market_code: str) -> bool:
+    """Whether ``source`` is scoped to serve ``market_code``.
+
+    An empty ``markets`` list means "all markets" (matches how sources are
+    seeded by ``ensure_default_sources``/created with no explicit scoping).
+    """
+    markets = source.markets_json.get("markets", [])
+    return not markets or market_code in markets
 
 
 async def build_composite_from_db(settings: AppSettings | None = None) -> CompositePriceProvider:
@@ -198,9 +216,17 @@ async def delete_source(source_id: int, settings: AppSettings | None = None) -> 
 async def check_source_health(
     source: DataSource, settings: AppSettings | None = None
 ) -> ProviderHealth:
-    """Run the provider's health check and persist the result on ``source``."""
+    """Run the provider's health check and persist the result on ``source``.
+
+    The provider built here is throwaway -- closed in ``finally`` (if it owns
+    a closeable resource, e.g. ``NSEProvider``'s ``httpx.AsyncClient``) so a
+    one-off health check never leaks a client.
+    """
     provider = build_price_provider(source.kind, source.config_json)
-    health = await provider.health_check()
+    try:
+        health = await provider.health_check()
+    finally:
+        await aclose_if_closeable(provider)
 
     async with async_session(settings) as session:
         db_source = await session.get(DataSource, source.id)

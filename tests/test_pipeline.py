@@ -54,6 +54,24 @@ def _provider_and_instruments(
     return provider, instruments
 
 
+class _CountingUniverseProvider:
+    """Wraps a fixed instrument list but counts ``.universe()`` calls -- used
+    to prove ``run_daily_pipeline`` resolves the universe exactly once and
+    passes the concrete list downstream to ``run_screen`` instead of letting
+    it call ``.universe()`` again (which, with a live/uncached provider like
+    ``TVUniverseProvider``, could return a different result the second time)."""
+
+    name = "counting"
+
+    def __init__(self, instruments: list[Instrument]) -> None:
+        self._instruments = instruments
+        self.calls = 0
+
+    async def universe(self, market: Market) -> list[Instrument]:
+        self.calls += 1
+        return list(self._instruments)
+
+
 class _FlakyProvider:
     """Wraps a ``StaticPriceProvider`` but raises for one chosen symbol."""
 
@@ -76,6 +94,34 @@ class _FlakyProvider:
 
     async def health_check(self) -> ProviderHealth:
         return await self._inner.health_check()
+
+
+class _ClosingSpyProvider:
+    """Wraps a ``StaticPriceProvider`` and adds an ``aclose`` that flips
+    ``closed`` -- used to prove ``run_daily_pipeline`` closes a provider it
+    built itself (``owns_provider``) but leaves a caller-supplied one open,
+    mirroring the existing ``owns_store`` pattern."""
+
+    name = "closing_spy"
+
+    def __init__(self, inner: StaticPriceProvider) -> None:
+        self._inner = inner
+        self.closed = False
+
+    def supports(self, market: Market) -> bool:
+        return True
+
+    async def get_daily_bars(self, inst: Instrument, start: date, end: date) -> NDArray[np.void]:
+        return await self._inner.get_daily_bars(inst, start, end)
+
+    async def get_quote(self, inst: Instrument) -> Quote | None:
+        return await self._inner.get_quote(inst)
+
+    async def health_check(self) -> ProviderHealth:
+        return await self._inner.health_check()
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class _HangingProvider:
@@ -131,6 +177,24 @@ async def test_run_daily_pipeline_full_flow(
         ).scalar_one()
         assert run.market == US_NASDAQ.code
         assert run.status == "completed"
+
+
+async def test_run_daily_pipeline_resolves_universe_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.setattr("argus.pipeline.get_settings", lambda: settings)
+
+    provider, instruments = _provider_and_instruments()
+    universe_provider = _CountingUniverseProvider(instruments)
+
+    report = await run_daily_pipeline(
+        US_NASDAQ.code, provider=provider, universe_provider=universe_provider
+    )
+
+    assert universe_provider.calls == 1
+    assert report.run_id > 0
+    assert any(c.instrument.symbol == "MOMO" for c in report.result.top)
 
 
 async def test_run_daily_pipeline_second_run_adds_no_new_bars(
@@ -282,6 +346,45 @@ async def test_run_daily_pipeline_llm_backend_failure_degrades_gracefully(
     )
 
     assert report.llm_used is False
+    assert report.run_id > 0
+
+
+async def test_run_daily_pipeline_closes_provider_it_built_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.setattr("argus.pipeline.get_settings", lambda: settings)
+
+    base_provider, instruments = _provider_and_instruments()
+    universe_provider = StaticUniverseProvider({US_NASDAQ.code: instruments})
+    spy = _ClosingSpyProvider(base_provider)
+
+    async def _fake_build_composite(_settings: AppSettings) -> _ClosingSpyProvider:
+        return spy
+
+    monkeypatch.setattr("argus.pipeline.build_composite_from_db", _fake_build_composite)
+
+    report = await run_daily_pipeline(US_NASDAQ.code, universe_provider=universe_provider)
+
+    assert spy.closed is True
+    assert report.run_id > 0
+
+
+async def test_run_daily_pipeline_leaves_caller_supplied_provider_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.setattr("argus.pipeline.get_settings", lambda: settings)
+
+    base_provider, instruments = _provider_and_instruments()
+    universe_provider = StaticUniverseProvider({US_NASDAQ.code: instruments})
+    spy = _ClosingSpyProvider(base_provider)
+
+    report = await run_daily_pipeline(
+        US_NASDAQ.code, provider=spy, universe_provider=universe_provider
+    )
+
+    assert spy.closed is False
     assert report.run_id > 0
 
 

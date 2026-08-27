@@ -25,14 +25,14 @@ from argus.advisor import (
 from argus.config import AppSettings, get_settings
 from argus.config.data import DataSettings
 from argus.data.fundamentals import build_default_fundamentals
-from argus.data.prices.base import PriceDataProvider
+from argus.data.prices.base import PriceDataProvider, aclose_if_closeable
 from argus.data.sources import (
     build_composite_from_db,
     ensure_default_sources,
     resolve_universe_provider,
 )
 from argus.data.store.duckdb_ohlcv import BarStore, refresh_bars
-from argus.data.universe import UniverseProvider, sync_instruments_to_db
+from argus.data.universe import StaticUniverseProvider, UniverseProvider, sync_instruments_to_db
 from argus.db import init_db
 from argus.markets import Instrument, Market, get_market
 from argus.screener.runner import ScreenResult, persist_screen_result, run_screen
@@ -99,9 +99,11 @@ async def run_daily_pipeline(
 
     ``provider``/``store``/``universe_provider`` are injection points for
     tests and the smoke-run script; when omitted, production defaults are
-    built from settings. A ``store`` this call creates itself is closed
-    before returning; a caller-supplied ``store`` is left open for the
-    caller to manage.
+    built from settings. A ``store``/``provider`` this call creates itself is
+    closed before returning (``provider`` only if it implements
+    ``CloseablePriceProvider``, e.g. a ``CompositePriceProvider`` fanning out
+    to an ``NSEProvider``); a caller-supplied ``store``/``provider`` is left
+    open for the caller to manage.
     """
     settings = get_settings()
     market = get_market(market_code)
@@ -110,6 +112,7 @@ async def run_daily_pipeline(
     await ensure_default_sources(settings)
 
     owns_store = store is None
+    owns_provider = provider is None
     resolved_store = store if store is not None else BarStore(settings.duckdb_path)
     resolved_provider = (
         provider if provider is not None else await build_composite_from_db(settings)
@@ -117,10 +120,17 @@ async def run_daily_pipeline(
     resolved_universe: UniverseProvider = (
         universe_provider
         if universe_provider is not None
-        else await resolve_universe_provider(settings)
+        else await resolve_universe_provider(market_code, settings)
     )
 
     try:
+        # Resolved once here rather than a second time inside ``run_screen`` --
+        # with a live (uncached) universe provider like ``TVUniverseProvider``,
+        # calling ``.universe()`` twice can return different results across the
+        # two live scanner queries, or silently fall back to seed CSVs on the
+        # second call even though bars were only refreshed for the first
+        # call's instruments. ``run_screen`` gets the concrete list wrapped in
+        # a ``StaticUniverseProvider`` so its own ``.universe()`` call is free.
         instruments = await resolved_universe.universe(market)
         await sync_instruments_to_db(instruments, settings)
 
@@ -138,7 +148,7 @@ async def run_daily_pipeline(
         result = await run_screen(
             market,
             store=resolved_store,
-            universe_provider=resolved_universe,
+            universe_provider=StaticUniverseProvider({market.code: instruments}),
             top_n=top_n,
             fundamentals_provider=build_default_fundamentals(),
         )
@@ -159,6 +169,8 @@ async def run_daily_pipeline(
     finally:
         if owns_store:
             resolved_store.close()
+        if owns_provider:
+            await aclose_if_closeable(resolved_provider)
 
 
 async def _refresh_all(
