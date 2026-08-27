@@ -374,6 +374,7 @@ async def suggest_for_picks(
     settings: OptionsSettings | None = None,
     iv_history_lookup: IvHistoryLookup | None = None,
     provider_factory: ProviderFactory | None = None,
+    chain_cache: dict[tuple[str, str], OptionChain] | None = None,
 ) -> dict[str, DerivativeSuggestion]:
     """Build a ``DerivativeSuggestion`` for each of ``report.result.top`` whose
     instrument has options or futures, keyed by symbol.
@@ -387,6 +388,14 @@ async def suggest_for_picks(
     instead. Bounded concurrency via a semaphore (see ``_CONCURRENCY``).
     Never raises -- a per-symbol provider/build/fetch failure is logged and
     that symbol is simply absent from the result.
+
+    ``chain_cache`` (keyed by ``(symbol, market_code)``) lets a caller that
+    already fetched a pick's chain elsewhere in the same run hand it over
+    instead of this function fetching it again (Task 13's pipeline
+    orderflow-annotation step does exactly this, so a pick's chain is
+    fetched at most once per run rather than once for orderflow and again
+    here). A symbol missing from the cache (or no cache at all -- the
+    default) is fetched the old way, unaffected.
     """
     opts = settings if settings is not None else get_settings().options
     factory = provider_factory if provider_factory is not None else build_option_provider
@@ -397,6 +406,19 @@ async def suggest_for_picks(
         inst = candidate.instrument
         if not inst.has_options and not inst.has_futures:
             return
+
+        cached_chain = (
+            chain_cache.get((inst.symbol, inst.market_code)) if chain_cache is not None else None
+        )
+        if cached_chain is not None:
+            history = iv_history_lookup(inst) if iv_history_lookup is not None else ()
+            suggestion = suggest_derivative(
+                candidate, cached_chain, risk=risk, settings=opts, iv_history=history
+            )
+            if suggestion is not None:
+                results[inst.symbol] = suggestion
+            return
+
         # ``provider`` is built and cleaned up inside the try/finally too --
         # a misbehaving factory (or a provider constructor that raises) must
         # not escape this function any more than a bad fetch would.

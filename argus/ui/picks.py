@@ -8,6 +8,7 @@ from nicegui import ui
 from nicegui.events import ValueChangeEventArguments
 
 from argus.db.models import DailyPick, OptionSuggestion, ScreenRun
+from argus.orderflow.features import format_orderflow_summary
 from argus.ui.layout import page_frame
 from argus.ui.queries import option_suggestions_for_run, picks_for_run, recent_runs
 
@@ -86,6 +87,13 @@ def _pick_expansion(p: DailyPick, suggestion: OptionSuggestion | None = None) ->
                     confidence = vote.get("confidence", _NA)
                     thesis = str(vote.get("thesis") or _NA)
                     ui.label(f"{persona}: {vote_verdict} (confidence {confidence}) — {thesis}")
+
+        orderflow = (p.features_json or {}).get("orderflow")
+        if isinstance(orderflow, dict):
+            orderflow_line = format_orderflow_summary(orderflow)
+            if orderflow_line:
+                ui.label("Orderflow").classes("font-bold mt-2")
+                ui.label(orderflow_line)
 
         if p.features_json:
             ui.label("Features").classes("font-bold mt-2")

@@ -81,6 +81,14 @@ class NSEProvider:
         # on it -- see module docstring. Documented, not a bug.
         return np.zeros(0, dtype=BAR_DTYPE)
 
+    async def get_intraday_bars(
+        self, inst: Instrument, interval: str = "15m", lookback_days: int = 30
+    ) -> NDArray[np.void]:
+        # No intraday history endpoint wired up -- same rationale as
+        # get_daily_bars above. Documented, not a bug; the composite provider
+        # falls through to another source (currently none) for intraday.
+        return np.zeros(0, dtype=BAR_DTYPE)
+
     async def get_quote(self, inst: Instrument) -> Quote | None:
         if inst.market_code != IN_NSE.code:
             return None

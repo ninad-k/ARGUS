@@ -220,5 +220,11 @@ async def test_value_empty_universe_returns_no_candidates() -> None:
     assert await ValueStrategy().screen(ctx) == []
 
 
-def test_registry_discovers_four_strategies() -> None:
-    assert set(all_strategies()) == {"momentum", "breakout", "value", "mean_reversion"}
+def test_registry_discovers_five_strategies() -> None:
+    assert set(all_strategies()) == {
+        "momentum",
+        "breakout",
+        "value",
+        "mean_reversion",
+        "orderflow_confluence",
+    }

@@ -48,11 +48,21 @@ class StaticPriceProvider:
 
     name = "static"
 
-    def __init__(self, bars_by_symbol: dict[str, NDArray[np.void]] | None = None) -> None:
+    def __init__(
+        self,
+        bars_by_symbol: dict[str, NDArray[np.void]] | None = None,
+        intraday_by_symbol: dict[str, NDArray[np.void]] | None = None,
+    ) -> None:
         self._bars: dict[str, NDArray[np.void]] = bars_by_symbol or {}
+        # Optional -- most tests never populate this, and get_intraday_bars()
+        # then just returns empty like the real no-intraday providers.
+        self._intraday: dict[str, NDArray[np.void]] = intraday_by_symbol or {}
 
     def add(self, symbol: str, bars: NDArray[np.void]) -> None:
         self._bars[symbol] = bars
+
+    def add_intraday(self, symbol: str, bars: NDArray[np.void]) -> None:
+        self._intraday[symbol] = bars
 
     def supports(self, market: Market) -> bool:
         return True
@@ -67,6 +77,17 @@ class StaticPriceProvider:
         end_ts = np.datetime64(end, "s") + np.timedelta64(1, "D")
         mask = (bars["ts"] >= start_ts) & (bars["ts"] < end_ts)
         return bars[mask]
+
+    async def get_intraday_bars(
+        self, inst: Instrument, interval: str = "15m", lookback_days: int = 30
+    ) -> NDArray[np.void]:
+        bars = self._intraday.get(inst.symbol)
+        if bars is None or len(bars) == 0:
+            return np.zeros(0, dtype=BAR_DTYPE)
+        cutoff = np.datetime64(datetime.now(UTC).replace(tzinfo=None), "s") - np.timedelta64(
+            lookback_days, "D"
+        )
+        return bars[bars["ts"] >= cutoff]
 
     async def get_quote(self, inst: Instrument) -> Quote | None:
         bars = self._bars.get(inst.symbol)

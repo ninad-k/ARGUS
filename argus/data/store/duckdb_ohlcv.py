@@ -36,6 +36,21 @@ CREATE TABLE IF NOT EXISTS daily_bars (
 )
 """
 
+_INTRADAY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS intraday_bars (
+    market VARCHAR NOT NULL,
+    symbol VARCHAR NOT NULL,
+    interval VARCHAR NOT NULL,
+    ts TIMESTAMP NOT NULL,
+    open DOUBLE NOT NULL,
+    high DOUBLE NOT NULL,
+    low DOUBLE NOT NULL,
+    close DOUBLE NOT NULL,
+    volume DOUBLE NOT NULL,
+    PRIMARY KEY (market, symbol, interval, ts)
+)
+"""
+
 
 class BarStore:
     """DuckDB-backed cache of daily OHLCV bars, keyed by (market, symbol, ts).
@@ -58,6 +73,7 @@ class BarStore:
         self._lock = threading.Lock()
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(_SCHEMA)
+        self._conn.execute(_INTRADAY_SCHEMA)
 
     def close(self) -> None:
         self._conn.close()
@@ -144,6 +160,81 @@ class BarStore:
             np.array([r[5] for r in rows], dtype=np.float64),
         )
 
+    def upsert_intraday(
+        self, market_code: str, symbol: str, interval: str, bars: NDArray[np.void]
+    ) -> int:
+        """Insert or replace intraday ``bars`` for ``(market_code, symbol, interval)``.
+        Returns row count. Mirrors ``upsert_bars`` -- see its docstring."""
+        if len(bars) == 0:
+            return 0
+
+        frame = pd.DataFrame(
+            {
+                "market": market_code,
+                "symbol": symbol,
+                "interval": interval,
+                "ts": bars["ts"].astype("datetime64[s]"),
+                "open": bars["open"],
+                "high": bars["high"],
+                "low": bars["low"],
+                "close": bars["close"],
+                "volume": bars["volume"],
+            }
+        )
+        with self._lock:
+            self._conn.register("_argus_upsert_intraday_frame", frame)
+            try:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO intraday_bars
+                        (market, symbol, interval, ts, open, high, low, close, volume)
+                    SELECT market, symbol, interval, ts, open, high, low, close, volume
+                    FROM _argus_upsert_intraday_frame
+                    """
+                )
+            finally:
+                self._conn.unregister("_argus_upsert_intraday_frame")
+        return int(len(frame))
+
+    def get_intraday(
+        self, market_code: str, symbol: str, interval: str, last_n: int | None = None
+    ) -> NDArray[np.void]:
+        """Return intraday bars ascending by ``ts``. Mirrors ``get_bars`` --
+        see its docstring."""
+        if last_n is not None:
+            query = """
+                SELECT ts, open, high, low, close, volume FROM (
+                    SELECT ts, open, high, low, close, volume FROM intraday_bars
+                    WHERE market = ? AND symbol = ? AND interval = ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                ) sub
+                ORDER BY ts ASC
+            """
+            params: list[object] = [market_code, symbol, interval, last_n]
+        else:
+            query = """
+                SELECT ts, open, high, low, close, volume FROM intraday_bars
+                WHERE market = ? AND symbol = ? AND interval = ?
+                ORDER BY ts ASC
+            """
+            params = [market_code, symbol, interval]
+
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        if not rows:
+            return np.zeros(0, dtype=BAR_DTYPE)
+
+        ts = np.array([r[0] for r in rows], dtype="datetime64[s]")
+        return bars_from_columns(
+            ts,
+            np.array([r[1] for r in rows], dtype=np.float64),
+            np.array([r[2] for r in rows], dtype=np.float64),
+            np.array([r[3] for r in rows], dtype=np.float64),
+            np.array([r[4] for r in rows], dtype=np.float64),
+            np.array([r[5] for r in rows], dtype=np.float64),
+        )
+
     def last_ts(self, market_code: str, symbol: str) -> datetime | None:
         with self._lock:
             row = self._conn.execute(
@@ -189,3 +280,29 @@ async def refresh_bars(
     if len(bars) == 0:
         return 0
     return await asyncio.to_thread(store.upsert_bars, inst.market_code, inst.symbol, bars)
+
+
+async def refresh_intraday(
+    store: BarStore,
+    provider: PriceDataProvider,
+    inst: Instrument,
+    interval: str = "15m",
+    lookback_days: int = 30,
+) -> int:
+    """Fetch fresh intraday bars for ``inst`` and upsert into ``store``.
+
+    Unlike ``refresh_bars``, this always re-fetches the full ``lookback_days``
+    window rather than incrementally continuing from the store's last known
+    timestamp -- intraday bars are only ever pulled for a handful of
+    post-screen top candidates (Task 13), not a whole universe, so the extra
+    cost of a full re-fetch each run is acceptable and keeps this simple.
+    ``upsert_intraday`` is an ``INSERT OR REPLACE``, so re-fetching the same
+    window is idempotent. Returns the number of rows upserted (0 if the
+    provider has nothing, e.g. every non-yfinance provider today).
+    """
+    bars = await provider.get_intraday_bars(inst, interval=interval, lookback_days=lookback_days)
+    if len(bars) == 0:
+        return 0
+    return await asyncio.to_thread(
+        store.upsert_intraday, inst.market_code, inst.symbol, interval, bars
+    )

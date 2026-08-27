@@ -31,10 +31,13 @@ from argus.data.sources import (
     ensure_default_sources,
     resolve_universe_provider,
 )
-from argus.data.store.duckdb_ohlcv import BarStore, refresh_bars
+from argus.data.store.duckdb_ohlcv import BarStore, refresh_bars, refresh_intraday
 from argus.data.universe import StaticUniverseProvider, UniverseProvider, sync_instruments_to_db
 from argus.db import init_db
 from argus.markets import Instrument, Market, get_market
+from argus.options.models import OptionChain
+from argus.options.providers.base import OptionChainProvider
+from argus.options.providers.factory import build_option_provider
 from argus.options.suggester import (
     DerivativeSuggestion,
     ProviderFactory,
@@ -42,6 +45,8 @@ from argus.options.suggester import (
     persist_suggestions,
     suggest_for_picks,
 )
+from argus.orderflow.features import compute_orderflow, to_feature_dict
+from argus.screener.base import Candidate
 from argus.screener.runner import ScreenResult, persist_screen_result, run_screen
 
 logger = structlog.get_logger(__name__)
@@ -55,6 +60,13 @@ _REFRESH_CONCURRENCY = 4
 # ``_per_symbol_refresh_timeout``. A module-level constant (rather than
 # inline) so tests can shrink it to make the outer-timeout path fast to test.
 _PER_SYMBOL_TIMEOUT_SLACK_SECONDS = 30.0
+
+# Interval/lookback the post-screen orderflow-annotation step (Task 13)
+# refreshes intraday bars at -- a finer grid than daily bars gives a better
+# volume profile without pulling a whole universe's worth of intraday data
+# (only run for ``result.top``, see ``_annotate_orderflow``).
+_ORDERFLOW_INTRADAY_INTERVAL = "15m"
+_ORDERFLOW_INTRADAY_LOOKBACK_DAYS = 30
 
 
 def _per_symbol_refresh_timeout(data_settings: DataSettings) -> float:
@@ -170,6 +182,10 @@ async def run_daily_pipeline(
             fundamentals_provider=build_default_fundamentals(),
         )
 
+        chain_cache = await _annotate_orderflow(
+            result, resolved_store, resolved_provider, settings, option_provider_factory
+        )
+
         llm_used = False
         if llm and settings.llm.enabled and result.top:
             llm_used = await _review_with_llm(result, market, settings)
@@ -186,7 +202,7 @@ async def run_daily_pipeline(
 
         if settings.options.enabled:
             report.suggestions = await _suggest_derivatives(
-                report, settings, option_provider_factory
+                report, settings, option_provider_factory, chain_cache
             )
 
         return report
@@ -246,12 +262,117 @@ async def _refresh_all(
     return total_added, failed
 
 
+async def _annotate_orderflow(
+    result: ScreenResult,
+    store: BarStore,
+    provider: PriceDataProvider,
+    settings: AppSettings,
+    option_provider_factory: ProviderFactory | None,
+) -> dict[tuple[str, str], OptionChain]:
+    """Orderflow annotation step (Task 13) for ``result.top`` only -- never
+    the whole universe, keeping this cheap.
+
+    Per top pick: refresh intraday bars (a no-op when the provider has no
+    intraday support, e.g. every provider but ``YFinanceProvider`` today --
+    see ``PriceDataProvider.get_intraday_bars``), fetch its option chain
+    once (when options are enabled and the instrument has options/futures),
+    and compute ``OrderflowFeatures`` from stored daily + intraday bars +
+    that chain, stashing the result under
+    ``Candidate.features["orderflow"]`` so it round-trips through
+    ``persist_screen_result`` into ``DailyPick.features_json``.
+
+    The fetched chain is returned (keyed by ``(symbol, market_code)``) so
+    ``_suggest_derivatives``/``suggest_for_picks`` can reuse it instead of
+    fetching the same chain again -- see ``suggest_for_picks``'s
+    ``chain_cache`` parameter. Exception-contained per pick: a bad
+    refresh/fetch/compute never drops a pick or breaks the pipeline, it just
+    leaves that pick without an "orderflow" key (and/or a cached chain).
+    """
+    resolved_factory = (
+        option_provider_factory if option_provider_factory is not None else build_option_provider
+    )
+
+    chain_cache: dict[tuple[str, str], OptionChain] = {}
+
+    async def _one(candidate: Candidate) -> None:
+        inst = candidate.instrument
+
+        try:
+            await refresh_intraday(
+                store,
+                provider,
+                inst,
+                interval=_ORDERFLOW_INTRADAY_INTERVAL,
+                lookback_days=_ORDERFLOW_INTRADAY_LOOKBACK_DAYS,
+            )
+        except Exception as exc:  # noqa: BLE001 -- must never break the pipeline
+            logger.warning(
+                "pipeline.orderflow.intraday_refresh_failed", symbol=inst.symbol, error=str(exc)
+            )
+
+        chain: OptionChain | None = None
+        if settings.options.enabled and (inst.has_options or inst.has_futures):
+            option_provider: OptionChainProvider | None = None
+            try:
+                option_provider = resolved_factory(inst)
+                if option_provider is not None:
+                    chain = await option_provider.get_chain(inst)
+                    if chain is not None:
+                        chain_cache[(inst.symbol, inst.market_code)] = chain
+            except Exception as exc:  # noqa: BLE001 -- must never break the pipeline
+                logger.warning(
+                    "pipeline.orderflow.chain_fetch_failed", symbol=inst.symbol, error=str(exc)
+                )
+            finally:
+                if option_provider is not None:
+                    try:
+                        await option_provider.aclose()
+                    except Exception as exc:  # noqa: BLE001 -- must never break the pipeline
+                        logger.warning(
+                            "pipeline.orderflow.chain_aclose_failed",
+                            symbol=inst.symbol,
+                            error=str(exc),
+                        )
+
+        try:
+            daily = await asyncio.to_thread(
+                store.get_bars, inst.market_code, inst.symbol, 260
+            )
+            intraday = await asyncio.to_thread(
+                store.get_intraday,
+                inst.market_code,
+                inst.symbol,
+                _ORDERFLOW_INTRADAY_INTERVAL,
+            )
+            of = compute_orderflow(
+                daily,
+                intraday_bars=intraday if len(intraday) > 0 else None,
+                chain=chain if inst.has_options else None,
+            )
+            if of is not None:
+                candidate.features["orderflow"] = to_feature_dict(of)
+        except Exception as exc:  # noqa: BLE001 -- must never break the pipeline
+            logger.warning("pipeline.orderflow.compute_failed", symbol=inst.symbol, error=str(exc))
+
+    try:
+        await asyncio.gather(*(_one(c) for c in result.top))
+    except Exception as exc:  # noqa: BLE001 -- must never break the pipeline
+        logger.warning("pipeline.orderflow.annotate_failed", error=str(exc))
+    return chain_cache
+
+
 async def _suggest_derivatives(
     report: ScreenReport,
     settings: AppSettings,
     option_provider_factory: ProviderFactory | None,
+    chain_cache: dict[tuple[str, str], OptionChain] | None = None,
 ) -> dict[str, DerivativeSuggestion]:
     """Attach derivative suggestions to ``report``'s top picks (Task 12).
+
+    ``chain_cache`` is the (symbol, market_code)-keyed chain cache
+    ``_annotate_orderflow`` (Task 13) built while annotating the same picks
+    -- passed through to ``suggest_for_picks`` so a pick's chain is fetched
+    at most once per pipeline run.
 
     Exception-contained: a bad risk-level string, a suggester bug, or a DB
     hiccup while persisting degrades to "no suggestions" rather than
@@ -273,6 +394,7 @@ async def _suggest_derivatives(
             risk=risk,
             settings=settings.options,
             provider_factory=option_provider_factory,
+            chain_cache=chain_cache,
         )
         if suggestions:
             await persist_suggestions(report.run_id, suggestions, risk, settings)

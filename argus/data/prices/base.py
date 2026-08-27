@@ -84,6 +84,17 @@ class PriceDataProvider(Protocol):
         ascending by ``ts``. May be empty; never raises."""
         ...
 
+    async def get_intraday_bars(
+        self, inst: Instrument, interval: str = "15m", lookback_days: int = 30
+    ) -> NDArray[np.void]:
+        """Return recent intraday OHLCV bars, ``BAR_DTYPE``, ascending by
+        ``ts``. Needed for a good volume profile (Task 13) -- daily bars alone
+        are too coarse a price grid. Empty by default: most providers (NSE,
+        the TradingView scanner) have no intraday history endpoint at all, so
+        this is the safe no-op every implementation but ``YFinanceProvider``
+        keeps. Never raises."""
+        ...
+
     async def get_quote(self, inst: Instrument) -> Quote | None:
         """Return the latest available quote, or ``None`` if unavailable."""
         ...

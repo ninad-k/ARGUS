@@ -49,6 +49,24 @@ class CompositePriceProvider:
             )
         return np.zeros(0, dtype=BAR_DTYPE)
 
+    async def get_intraday_bars(
+        self, inst: Instrument, interval: str = "15m", lookback_days: int = 30
+    ) -> NDArray[np.void]:
+        market = _market_for(inst)
+        for provider in self._providers:
+            if market is not None and not provider.supports(market):
+                continue
+            bars = await provider.get_intraday_bars(inst, interval, lookback_days)
+            if len(bars) > 0:
+                return bars
+            logger.debug(
+                "composite.get_intraday_bars.empty",
+                provider=provider.name,
+                symbol=inst.symbol,
+                market=inst.market_code,
+            )
+        return np.zeros(0, dtype=BAR_DTYPE)
+
     async def get_quote(self, inst: Instrument) -> Quote | None:
         market = _market_for(inst)
         for provider in self._providers:

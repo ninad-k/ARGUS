@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -25,12 +25,18 @@ from argus.data.fundamentals import (
 from argus.data.store.duckdb_ohlcv import BarStore
 from argus.indicators.features import compute_features
 from argus.markets import Instrument, Market
+from argus.orderflow.features import OrderflowFeatures, compute_orderflow
 
 if TYPE_CHECKING:
     # Deferred to avoid a runtime cycle: argus.advisor.pick_reviewer imports
     # Candidate from this module. Safe under `from __future__ import
     # annotations` — the annotation below is never evaluated at runtime.
     from argus.advisor.pick_reviewer import PickVerdict
+
+# The intraday interval DefaultScreenContext.orderflow() reads from the
+# store -- matches the interval argus.pipeline's post-screen refresh step
+# writes with (see argus.data.store.duckdb_ohlcv.refresh_intraday's default).
+_INTRADAY_INTERVAL = "15m"
 
 
 @dataclass
@@ -46,7 +52,13 @@ class Candidate:
     entry: float | None = None
     stop: float | None = None
     target: float | None = None
-    features: dict[str, float] = field(default_factory=dict)
+    # Plain float for most strategy-computed features, but Task 13's
+    # post-screen pipeline annotation stashes a nested OrderflowFeatures
+    # dict under the "orderflow" key for top picks -- dict[str, Any] rather
+    # than dict[str, float] so that fits without a second features-like
+    # field. features_json (the DB column this round-trips through) is JSON
+    # anyway, so the nested dict persists/reads back fine.
+    features: dict[str, Any] = field(default_factory=dict)
     llm_verdict: PickVerdict | None = None
 
 
@@ -71,6 +83,17 @@ class ScreenContext(Protocol):
         """Fundamentals view for ``inst`` from the injected provider,
         memoized per symbol. ``None`` if the provider has no data (or no
         fundamentals provider was configured -- the ``Null`` default)."""
+        ...
+
+    async def orderflow(self, inst: Instrument) -> OrderflowFeatures | None:
+        """OHLCV-derived ``OrderflowFeatures`` for ``inst`` (Task 13),
+        memoized per symbol. Built from stored daily + (if present) intraday
+        bars; the options-chain-derived fields are always ``None`` at this
+        layer -- fetching a chain is a per-symbol network call, only worth it
+        for a run's top picks (see ``argus.pipeline``'s post-screen
+        annotation step, which attaches a chain and re-persists this same
+        shape under ``Candidate.features["orderflow"]``). ``None`` when
+        there's no bar history to compute from at all."""
         ...
 
 
@@ -124,6 +147,7 @@ class DefaultScreenContext:
             else NullFundamentalsProvider()
         )
         self._fundamentals_cache: dict[str, FundamentalsView | None] = {}
+        self._orderflow_cache: dict[str, OrderflowFeatures | None] = {}
 
     async def universe(self) -> list[Instrument]:
         return list(self._instruments)
@@ -148,3 +172,16 @@ class DefaultScreenContext:
         view = await self._fundamentals_provider.get(inst)
         self._fundamentals_cache[inst.symbol] = view
         return view
+
+    async def orderflow(self, inst: Instrument) -> OrderflowFeatures | None:
+        if inst.symbol in self._orderflow_cache:
+            return self._orderflow_cache[inst.symbol]
+        daily = await self.bars(inst)
+        intraday = await asyncio.to_thread(
+            self._store.get_intraday, inst.market_code, inst.symbol, _INTRADAY_INTERVAL
+        )
+        result = compute_orderflow(
+            daily, intraday_bars=intraday if len(intraday) > 0 else None, chain=None
+        )
+        self._orderflow_cache[inst.symbol] = result
+        return result

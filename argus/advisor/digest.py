@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 
 from argus.markets import Market
+from argus.orderflow.features import format_orderflow_summary
 from argus.screener.base import Candidate
 
 # Compact feature subset shown to the LLM per candidate -- enough to reason
@@ -50,6 +51,12 @@ def _format_candidate(c: Candidate) -> str:
         feature_bits.append(f"{key}={value:.2f}")
     if feature_bits:
         lines.append("Features: " + ", ".join(feature_bits))
+
+    orderflow = c.features.get("orderflow")
+    if isinstance(orderflow, dict):
+        orderflow_line = format_orderflow_summary(orderflow)
+        if orderflow_line:
+            lines.append("Orderflow: " + orderflow_line)
 
     return "\n".join(lines)
 

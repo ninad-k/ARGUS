@@ -117,6 +117,71 @@ class YFinanceProvider:
             hist["Volume"].to_numpy(dtype=np.float64),
         )
 
+    async def get_intraday_bars(
+        self, inst: Instrument, interval: str = "15m", lookback_days: int = 30
+    ) -> NDArray[np.void]:
+        # yfinance caps how far back intraday history goes by granularity --
+        # 15m data is only available for the last ~60 days (documented
+        # upstream limit, not configurable) -- clamp rather than let a caller
+        # pass e.g. 400 and silently get truncated/empty results back.
+        clamped_days = min(lookback_days, 60) if interval.endswith("m") else lookback_days
+
+        def _on_error(attempt: int, exc: BaseException) -> None:
+            logger.warning(
+                "yfinance.get_intraday_bars.attempt_failed",
+                symbol=inst.symbol,
+                market=inst.market_code,
+                interval=interval,
+                attempt=attempt,
+                error=str(exc) or "timed out",
+            )
+
+        try:
+            return await retry_async(
+                lambda: asyncio.to_thread(
+                    self._fetch_intraday_bars, inst, interval, clamped_days
+                ),
+                attempts=self._max_retries + 1,
+                timeout_seconds=self._timeout_seconds,
+                retry_if=lambda bars: len(bars) == 0,
+                on_error=_on_error,
+            )
+        except Exception as exc:  # noqa: BLE001 — provider methods never raise
+            logger.warning(
+                "yfinance.get_intraday_bars.error",
+                symbol=inst.symbol,
+                market=inst.market_code,
+                interval=interval,
+                error=str(exc),
+            )
+            return np.zeros(0, dtype=BAR_DTYPE)
+
+    def _fetch_intraday_bars(
+        self, inst: Instrument, interval: str, lookback_days: int
+    ) -> NDArray[np.void]:
+        ticker = yf.Ticker(yahoo_ticker(inst))
+        hist = ticker.history(period=f"{lookback_days}d", interval=interval, auto_adjust=False)
+        if hist is None or hist.empty:
+            return np.zeros(0, dtype=BAR_DTYPE)
+
+        hist = hist.dropna(subset=["Open", "High", "Low", "Close"])
+        if hist.empty:
+            return np.zeros(0, dtype=BAR_DTYPE)
+
+        index = hist.index
+        if getattr(index, "tz", None) is not None:
+            index = index.tz_localize(None)
+        ts = index.to_numpy().astype("datetime64[s]")
+
+        return bars_from_columns(
+            ts,
+            hist["Open"].to_numpy(dtype=np.float64),
+            hist["High"].to_numpy(dtype=np.float64),
+            hist["Low"].to_numpy(dtype=np.float64),
+            hist["Close"].to_numpy(dtype=np.float64),
+            hist["Volume"].to_numpy(dtype=np.float64),
+        )
+
     async def get_quote(self, inst: Instrument) -> Quote | None:
         # A single attempt -- quotes are non-critical (the screener falls
         # back to the last daily close), so unlike get_daily_bars this isn't

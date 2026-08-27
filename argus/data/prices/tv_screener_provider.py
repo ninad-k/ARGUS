@@ -99,6 +99,13 @@ class TVScreenerProvider:
     ) -> NDArray[np.void]:
         return np.zeros(0, dtype=BAR_DTYPE)
 
+    async def get_intraday_bars(
+        self, inst: Instrument, interval: str = "15m", lookback_days: int = 30
+    ) -> NDArray[np.void]:
+        # The TV scanner is a point-in-time snapshot, not a bars endpoint --
+        # same rationale as get_daily_bars above. Documented, not a bug.
+        return np.zeros(0, dtype=BAR_DTYPE)
+
     async def get_quote(self, inst: Instrument) -> Quote | None:
         tv_market = _TV_MARKET_BY_CODE.get(inst.market_code)
         if tv_market is None:

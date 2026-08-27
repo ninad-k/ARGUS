@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from argus.config import get_settings
+from argus.orderflow.features import format_orderflow_summary
 from argus.pipeline import ScreenReport
 from argus.screener.base import Candidate
 
@@ -80,6 +81,11 @@ def render_markdown_report(report: ScreenReport) -> str:
         )
         lines.append("")
         lines.append(f"**Reason:** {c.reason or _NA}")
+        orderflow = c.features.get("orderflow")
+        if isinstance(orderflow, dict):
+            orderflow_line = format_orderflow_summary(orderflow)
+            if orderflow_line:
+                lines.append(f"**Orderflow:** {orderflow_line}")
         if c.llm_verdict is not None:
             lines.append("")
             lines.append(
