@@ -7,9 +7,9 @@ from typing import Any
 from nicegui import ui
 from nicegui.events import ValueChangeEventArguments
 
-from argus.db.models import DailyPick, ScreenRun
+from argus.db.models import DailyPick, OptionSuggestion, ScreenRun
 from argus.ui.layout import page_frame
-from argus.ui.queries import picks_for_run, recent_runs
+from argus.ui.queries import option_suggestions_for_run, picks_for_run, recent_runs
 
 _NA = "-"
 
@@ -18,7 +18,37 @@ def _run_label(run: ScreenRun) -> str:
     return f"{run.market} — {run.run_ts:%Y-%m-%d %H:%M} UTC (run {run.id})"
 
 
-def _pick_expansion(p: DailyPick) -> None:
+def _suggestion_section(s: OptionSuggestion) -> None:
+    ui.label("Derivative Idea").classes("font-bold mt-2")
+    with ui.row().classes("items-center gap-2"):
+        ui.badge(s.instrument_type).classes(
+            "bg-green-600" if s.instrument_type == "CE" else "bg-red-600"
+            if s.instrument_type == "PE"
+            else "bg-blue-600"
+        )
+        ui.label(f"Risk: {s.risk_level}")
+    with ui.grid(columns=2).classes("gap-x-4"):
+        if s.instrument_type != "FUT":
+            ui.label("Strike:")
+            ui.label(f"{s.strike:g}")
+        ui.label("Expiry:")
+        ui.label(s.expiry.strftime("%Y-%m-%d"))
+        ui.label("Suggested price:")
+        ui.label(f"{s.suggested_price:.2f}" if s.suggested_price is not None else _NA)
+        if s.delta is not None:
+            ui.label("Delta:")
+            ui.label(f"{s.delta:.2f}")
+        if s.iv is not None:
+            ui.label("IV:")
+            ui.label(f"{s.iv:.2%}")
+        if s.oi is not None:
+            ui.label("OI:")
+            ui.label(str(s.oi))
+    ui.label("Rationale").classes("font-bold mt-1")
+    ui.label(s.rationale or _NA)
+
+
+def _pick_expansion(p: DailyPick, suggestion: OptionSuggestion | None = None) -> None:
     verdict = p.llm_verdict_json or {}
     title = f"{p.symbol} — {p.strategy} — score {p.score:.1f}"
     with ui.expansion(title).classes("w-full"):
@@ -63,16 +93,20 @@ def _pick_expansion(p: DailyPick) -> None:
                 "\n".join(f"- **{k}**: {v}" for k, v in sorted(p.features_json.items()))
             )
 
+        if suggestion is not None:
+            _suggestion_section(suggestion)
+
 
 async def _render_picks(container: ui.column, run_id: int) -> None:
     container.clear()
     picks = await picks_for_run(run_id)
+    suggestions_by_pick = await option_suggestions_for_run(run_id)
     with container:
         if not picks:
             ui.label("No picks for this run.").classes("text-gray-500")
             return
         for p in picks:
-            _pick_expansion(p)
+            _pick_expansion(p, suggestions_by_pick.get(p.id))
 
 
 @ui.page("/picks")

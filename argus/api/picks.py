@@ -18,6 +18,7 @@ from argus.api.schemas import (
     DailyPickOut,
     LatestPicksEntry,
     LatestPicksResponse,
+    OptionSuggestionOut,
     RunsListResponse,
     ScreenRunOut,
     ScreenRunRequest,
@@ -25,7 +26,7 @@ from argus.api.schemas import (
 )
 from argus.config import get_settings
 from argus.db import async_session
-from argus.db.models import DailyPick, ScreenRun
+from argus.db.models import DailyPick, OptionSuggestion, ScreenRun
 from argus.markets import all_markets
 from argus.pipeline import run_daily_pipeline
 
@@ -46,7 +47,22 @@ def _run_out(run: ScreenRun) -> ScreenRunOut:
     )
 
 
-def _pick_out(pick: DailyPick) -> DailyPickOut:
+def _suggestion_out(suggestion: OptionSuggestion) -> OptionSuggestionOut:
+    return OptionSuggestionOut(
+        id=suggestion.id,
+        risk_level=suggestion.risk_level,
+        instrument_type=suggestion.instrument_type,
+        strike=suggestion.strike,
+        expiry=suggestion.expiry,
+        suggested_price=suggestion.suggested_price,
+        iv=suggestion.iv,
+        delta=suggestion.delta,
+        oi=suggestion.oi,
+        rationale=suggestion.rationale,
+    )
+
+
+def _pick_out(pick: DailyPick, suggestion: OptionSuggestion | None = None) -> DailyPickOut:
     return DailyPickOut(
         id=pick.id,
         run_id=pick.run_id,
@@ -62,6 +78,7 @@ def _pick_out(pick: DailyPick) -> DailyPickOut:
         features_json=pick.features_json,
         llm_verdict_json=pick.llm_verdict_json,
         created_at=pick.created_at,
+        option_suggestion=_suggestion_out(suggestion) if suggestion is not None else None,
     )
 
 
@@ -97,8 +114,25 @@ async def get_latest_picks(market: str | None = Query(default=None)) -> LatestPi
                 .order_by(DailyPick.score.desc())
             )
             picks = list(picks_result.scalars().all())
+
+            suggestions_by_pick: dict[int, OptionSuggestion] = {}
+            if picks:
+                sugg_result = await session.execute(
+                    select(OptionSuggestion).where(
+                        OptionSuggestion.pick_id.in_([p.id for p in picks])
+                    )
+                )
+                # One suggestion per pick in practice (the suggester emits at
+                # most one idea per symbol per run) -- last-wins if that ever
+                # changes, rather than erroring.
+                for s in sugg_result.scalars().all():
+                    suggestions_by_pick[s.pick_id] = s
+
             entries.append(
-                LatestPicksEntry(run=_run_out(run), picks=[_pick_out(p) for p in picks])
+                LatestPicksEntry(
+                    run=_run_out(run),
+                    picks=[_pick_out(p, suggestions_by_pick.get(p.id)) for p in picks],
+                )
             )
 
     return LatestPicksResponse(markets=entries)

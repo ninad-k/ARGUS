@@ -22,6 +22,19 @@ class ScreenRunOut(BaseModel):
     duration_ms: int | None
 
 
+class OptionSuggestionOut(BaseModel):
+    id: int
+    risk_level: str
+    instrument_type: str
+    strike: float
+    expiry: datetime
+    suggested_price: float | None
+    iv: float | None
+    delta: float | None
+    oi: int | None
+    rationale: str | None
+
+
 class DailyPickOut(BaseModel):
     id: int
     run_id: int
@@ -37,6 +50,7 @@ class DailyPickOut(BaseModel):
     features_json: dict[str, Any]
     llm_verdict_json: dict[str, Any] | None
     created_at: datetime
+    option_suggestion: OptionSuggestionOut | None = None
 
 
 class LatestPicksEntry(BaseModel):

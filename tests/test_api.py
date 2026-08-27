@@ -15,11 +15,12 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from argus.api.router import router as api_router
 from argus.config import AppSettings
 from argus.db import async_session, init_db
-from argus.db.models import DailyPick, ScreenRun
+from argus.db.models import DailyPick, OptionSuggestion, ScreenRun
 from argus.pipeline import ScreenReport
 from argus.screener.runner import ScreenResult
 
@@ -184,6 +185,46 @@ async def test_picks_latest_returns_data_for_market(
         pick = entry["picks"][0]
         assert pick["symbol"] == "MOMO"
         assert pick["llm_verdict_json"]["verdict"] == "buy"
+        assert pick["option_suggestion"] is None
+
+
+async def test_picks_latest_includes_option_suggestion_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, settings = await _client(tmp_path, monkeypatch)
+    run_id = await _insert_run_with_picks(settings, "US_NASDAQ", "NVDA")
+
+    async with async_session(settings) as session:
+        pick = (
+            await session.execute(select(DailyPick).where(DailyPick.run_id == run_id))
+        ).scalar_one()
+        session.add(
+            OptionSuggestion(
+                pick_id=pick.id,
+                risk_level="moderate",
+                instrument_type="CE",
+                strike=190.0,
+                expiry=datetime(2026, 9, 25, tzinfo=UTC),
+                suggested_price=12.40,
+                iv=0.34,
+                delta=0.42,
+                oi=15000,
+                rationale="MODERATE: NVDA 25 Sep 190C @ ~12.40, Δ0.42, OI 15k, IVR 34",
+            )
+        )
+        await session.commit()
+
+    async with client:
+        resp = await client.get("/api/v1/picks/latest", params={"market": "US_NASDAQ"})
+        assert resp.status_code == 200
+        pick_out = resp.json()["markets"][0]["picks"][0]
+        suggestion = pick_out["option_suggestion"]
+        assert suggestion is not None
+        assert suggestion["instrument_type"] == "CE"
+        assert suggestion["strike"] == 190.0
+        assert suggestion["delta"] == 0.42
+        assert suggestion["oi"] == 15000
+        assert "NVDA" in suggestion["rationale"]
 
 
 async def test_picks_latest_without_market_covers_all_markets(

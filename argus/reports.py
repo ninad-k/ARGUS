@@ -90,6 +90,30 @@ def render_markdown_report(report: ScreenReport) -> str:
             lines.append(f"**Risks:** {c.llm_verdict.risks or _NA}")
         lines.append("")
 
+    if report.suggestions:
+        lines.append("## Derivative Ideas")
+        lines.append("")
+        lines.append(
+            "_Analysis only -- these are not orders and nothing is ever placed "
+            "automatically._"
+        )
+        lines.append("")
+        lines.append("| Symbol | Type | Strike | Expiry | Price | Δ | OI | Est. Cost | Rationale |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
+        for symbol in (c.instrument.symbol for c in result.top):
+            suggestion = report.suggestions.get(symbol)
+            if suggestion is None:
+                continue
+            strike = f"{suggestion.strike:g}" if suggestion.strike is not None else _NA
+            delta = f"{suggestion.delta:.2f}" if suggestion.delta is not None else _NA
+            oi = f"{suggestion.oi:.0f}" if suggestion.oi is not None else _NA
+            lines.append(
+                f"| {suggestion.symbol} | {suggestion.instrument_type} | {strike} | "
+                f"{suggestion.expiry.isoformat()} | {_fmt_price(suggestion.suggested_price)} | "
+                f"{delta} | {oi} | {_fmt_price(suggestion.est_cost)} | {suggestion.rationale} |"
+            )
+        lines.append("")
+
     return "\n".join(lines) + "\n"
 
 

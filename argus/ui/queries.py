@@ -12,7 +12,14 @@ from sqlalchemy import select
 
 from argus.config import AppSettings, get_settings
 from argus.db import async_session
-from argus.db.models import DailyPick, PaperEquityPoint, PaperOrder, PaperPosition, ScreenRun
+from argus.db.models import (
+    DailyPick,
+    OptionSuggestion,
+    PaperEquityPoint,
+    PaperOrder,
+    PaperPosition,
+    ScreenRun,
+)
 from argus.markets import all_markets
 
 _RECENT_RUNS_LIMIT = 20
@@ -40,6 +47,24 @@ async def picks_for_run(run_id: int, settings: AppSettings | None = None) -> lis
             select(DailyPick).where(DailyPick.run_id == run_id).order_by(DailyPick.score.desc())
         )
         return list(result.scalars().all())
+
+
+async def option_suggestions_for_run(
+    run_id: int, settings: AppSettings | None = None
+) -> dict[int, OptionSuggestion]:
+    """Option suggestions for ``run_id``'s picks, keyed by ``pick_id``."""
+    settings = settings or get_settings()
+    async with async_session(settings) as session:
+        pick_ids_result = await session.execute(
+            select(DailyPick.id).where(DailyPick.run_id == run_id)
+        )
+        pick_ids = [pid for (pid,) in pick_ids_result.all()]
+        if not pick_ids:
+            return {}
+        result = await session.execute(
+            select(OptionSuggestion).where(OptionSuggestion.pick_id.in_(pick_ids))
+        )
+        return {s.pick_id: s for s in result.scalars().all()}
 
 
 async def recent_runs(

@@ -79,6 +79,22 @@ async def settings_page() -> None:
                 )
 
         with ui.card():
+            ui.label("Options / Derivative Suggestions").classes("text-lg font-bold")
+            ui.label(f"Enabled: {settings.options.enabled}")
+            if settings.options.enabled:
+                ui.label(f"Risk level: {settings.options.risk_level}")
+                ui.label(f"Min OI: {settings.options.min_oi}")
+                ui.label(f"Max spread %: {settings.options.max_spread_pct}")
+                ui.label(f"IVR expensive threshold: {settings.options.ivr_expensive_threshold}")
+                ui.label(
+                    f"Expiry window: {settings.options.expiry_min_days}-"
+                    f"{settings.options.expiry_max_days} days"
+                )
+                ui.label(
+                    "Analysis only -- suggestions are never turned into orders."
+                ).classes("text-sm text-gray-500")
+
+        with ui.card():
             ui.label("Scheduler").classes("text-lg font-bold")
             ui.label(f"Enabled: {settings.scheduler.enabled}")
             if settings.scheduler.enabled:

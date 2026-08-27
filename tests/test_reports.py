@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from argus.advisor.pick_reviewer import PickVerdict
 from argus.markets import US_NASDAQ, Instrument
+from argus.options.suggester import DerivativeSuggestion, RiskLevel
 from argus.pipeline import ScreenReport
 from argus.reports import render_markdown_report, save_report
 from argus.screener.base import Candidate
@@ -14,7 +15,10 @@ from argus.screener.runner import ScreenResult
 
 
 def _report(
-    *, top: list[Candidate] | None = None, candidates: list[Candidate] | None = None
+    *,
+    top: list[Candidate] | None = None,
+    candidates: list[Candidate] | None = None,
+    suggestions: dict[str, DerivativeSuggestion] | None = None,
 ) -> ScreenReport:
     candidates = candidates if candidates is not None else (top or [])
     top = top if top is not None else candidates
@@ -27,7 +31,30 @@ def _report(
         top=top,
     )
     return ScreenReport(
-        result=result, run_id=7, bars_refreshed=123, symbols_failed=["BAD"], llm_used=True
+        result=result,
+        run_id=7,
+        bars_refreshed=123,
+        symbols_failed=["BAD"],
+        llm_used=True,
+        suggestions=suggestions or {},
+    )
+
+
+def _suggestion(symbol: str) -> DerivativeSuggestion:
+    return DerivativeSuggestion(
+        symbol=symbol,
+        market_code=US_NASDAQ.code,
+        instrument_type="CE",
+        strike=190.0,
+        expiry=date(2026, 9, 25),
+        suggested_price=12.40,
+        iv=0.34,
+        delta=0.42,
+        oi=15000.0,
+        lot_size=1,
+        est_cost=12.40,
+        rationale="MODERATE: NVDA 25 Sep 190C @ ~12.40, Δ0.42, OI 15.0k, IVR 34 — ATM call, 45 DTE",
+        risk_level=RiskLevel.MODERATE,
     )
 
 
@@ -84,6 +111,32 @@ def test_render_markdown_report_handles_no_candidates() -> None:
     markdown = render_markdown_report(report)
 
     assert "No candidates cleared the screen today" in markdown
+
+
+def test_render_markdown_report_renders_derivative_ideas_section() -> None:
+    candidate = _candidate("NVDA")
+    suggestion = _suggestion("NVDA")
+    report = _report(top=[candidate], suggestions={"NVDA": suggestion})
+
+    markdown = render_markdown_report(report)
+
+    assert "## Derivative Ideas" in markdown
+    assert "NVDA" in markdown
+    assert "CE" in markdown
+    assert "190" in markdown
+    assert "2026-09-25" in markdown
+    assert "12.40" in markdown
+    assert "0.42" in markdown
+    assert "15000" in markdown
+    assert suggestion.rationale in markdown
+
+
+def test_render_markdown_report_omits_derivative_ideas_section_when_empty() -> None:
+    report = _report(top=[_candidate("MSFT")])
+
+    markdown = render_markdown_report(report)
+
+    assert "## Derivative Ideas" not in markdown
 
 
 def test_save_report_writes_expected_path(tmp_path: Path) -> None:
