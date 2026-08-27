@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -20,6 +20,12 @@ from numpy.typing import NDArray
 from argus.data.store.duckdb_ohlcv import BarStore
 from argus.indicators.features import compute_features
 from argus.markets import Instrument, Market
+
+if TYPE_CHECKING:
+    # Deferred to avoid a runtime cycle: argus.advisor.pick_reviewer imports
+    # Candidate from this module. Safe under `from __future__ import
+    # annotations` — the annotation below is never evaluated at runtime.
+    from argus.advisor.pick_reviewer import PickVerdict
 
 
 @dataclass
@@ -36,6 +42,7 @@ class Candidate:
     stop: float | None = None
     target: float | None = None
     features: dict[str, float] = field(default_factory=dict)
+    llm_verdict: PickVerdict | None = None
 
 
 class ScreenContext(Protocol):

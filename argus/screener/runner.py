@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
 from argus.config import AppSettings
@@ -181,7 +181,7 @@ async def persist_screen_result(
                     stop=c.stop,
                     target=c.target,
                     features_json=json.loads(json.dumps(c.features)),
-                    llm_verdict_json=None,
+                    llm_verdict_json=asdict(c.llm_verdict) if c.llm_verdict is not None else None,
                     created_at=result.run_ts,
                 )
             )
